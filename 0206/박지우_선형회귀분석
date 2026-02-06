@@ -1,0 +1,19 @@
+지도학습 - 분류, 회귀
+
+1. 데이터 준비와 탐색
+- matplotlib 라이브러리 활용(matplotlib의 pyplot)
+- 산점도로 데이터 분포 파악
+
+1. 데이터 전처리
+- Numpy 라이브러리 활용 - 고차원의 배열을 조작하기 편리
+- np.array(data) → ndarray(n차원의 배열)로 만듬
+- scikit-learn : 분류, 회귀, 클러스터링, 차원축소, 모델선택, 전처리 가능
+- 그 중 train_test_split으로 학습용/시험용 데이터셋 나누기
+
+1. 선형 회귀
+- 직선을 학습하는 알고리즘
+- scikit_learn의 sklearn.linear_model 패키지 아래에 LinearRegression 활용
+    - fit(), score(), predict() 메서드 있음
+    - 모델.coef_ : 계수, 모델.intercept : 절편 → 둘 다 모델 파라미터라고 부름
+- 결정 계수 : 회귀에서 학습이 완료된 모델을 평가하는 점수
+    - R^2, MAE, MSE, RootMAE, RootMSE 등
