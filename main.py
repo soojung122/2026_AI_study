@@ -1,44 +1,31 @@
-
-import os
+# main.py
 from dotenv import load_dotenv
-from google import genai
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from prompts import build_opic_prompt
-from policy import OUTPUT_CONSTRAINTS
+from db import engine
+from models import Base
+from routers.opic import router as opic_router
 
 load_dotenv()
 
-def generate_opic_answer(profile: dict, goal_grade: str, question: str) -> str:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY가 .env에 없습니다.")
+app = FastAPI()
 
-    client = genai.Client(api_key=api_key)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    prompt = build_opic_prompt(
-        profile=profile,
-        goal_grade=goal_grade,
-        question=question,
-        constraints=OUTPUT_CONSTRAINTS
-    )
+@app.on_event("startup")
+def on_startup():
+    # ✅ 실행 시 테이블 자동 생성 (MVP)
+    Base.metadata.create_all(bind=engine)
 
-   
-    resp = client.models.generate_content(
-        model="models/gemini-2.5-flash",
-        contents=prompt
-    )
+@app.get("/api/health")
+def health():
+    return {"ok": True}
 
-    return resp.text.strip()
-
-if __name__ == "__main__":
-    profile = {
-        "name": "jung",
-        "job": "college student",
-        "city": "Yongin",
-        "hobbies": ["photo shooting", "cooking"],
-        "speaking_style": "natural"  # natural / confident / calm 등
-    }
-    goal_grade = "IH"  # IM / IH / AL
-    question = "Tell me about your home and what you like about it."
-
-    print(generate_opic_answer(profile, goal_grade, question))
+app.include_router(opic_router)

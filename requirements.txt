@@ -1,7 +1,13 @@
 python-dotenv
 google-genai
+
 google-cloud-speech
 google-cloud-texttospeech
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
+
+pymysql
+sqlalchemy
+fastapi
+uvicorn
