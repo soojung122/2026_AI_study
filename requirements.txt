@@ -11,3 +11,5 @@ pymysql
 sqlalchemy
 fastapi
 uvicorn
+
+google-cloud-texttospeech pygame
