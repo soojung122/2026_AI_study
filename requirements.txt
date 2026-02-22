@@ -12,7 +12,8 @@ sqlalchemy
 fastapi
 uvicorn
 
-google-cloud-texttospeech pygame
+google-cloud-texttospeech 
+pygame
 
 passlib[bcrypt]
 python-jose[cryptography]
