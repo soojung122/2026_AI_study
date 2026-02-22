@@ -14,6 +14,10 @@ from services.opic_flow import (
     get_session_summary,
 )
 
+# ✅ 260222 서은 - 로그인 사용자 주입을 위해 추가
+from deps import get_current_user
+from models import User
+
 router = APIRouter(prefix="/api/opic", tags=["opic"])
 
 
@@ -71,7 +75,11 @@ class ReportResponse(BaseModel):
 
 # ---------- Session Endpoints ----------
 @router.post("/sessions", response_model=SessionStartResponse)
-def start_session(req: SessionStartRequest, db: Session = Depends(get_db)):
+def start_session(
+    req: SessionStartRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),  # ✅ 260222 서은 - 현재 로그인 사용자 주입
+):
     """
     세션 시작:
     - profileId가 있으면 재사용
@@ -87,7 +95,9 @@ def start_session(req: SessionStartRequest, db: Session = Depends(get_db)):
         # job 필수 방어 (DB nullable=False면 꼭 필요)
         if not profile_dict.get("job"):
             raise HTTPException(status_code=400, detail="job은 필수입니다.")
-        profile_id = create_profile(db, profile_dict)  # int 반환
+
+        # ✅ 260222 서은 - user_id를 반드시 함께 저장
+        profile_id = create_profile(db, profile_dict, user_id=user.id)  # int 반환
 
     session_id = create_session(db, profile_id, req.goalGrade, target_count=req.targetCount)  # int 반환
 
@@ -105,7 +115,12 @@ def start_session(req: SessionStartRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/sessions/{session_id}/turn", response_model=TurnResponse)
-def session_turn(session_id: int, req: TurnRequest, db: Session = Depends(get_db)):
+def session_turn(
+    session_id: int,
+    req: TurnRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),  # ✅ 260222 서은 - 인증 필요
+):
     """
     Role A: Examiner turn
     """
@@ -121,7 +136,12 @@ def session_turn(session_id: int, req: TurnRequest, db: Session = Depends(get_db
 
 
 @router.post("/sessions/{session_id}/end", response_model=ReportResponse)
-def end_session(session_id: int, req: EndSessionRequest, db: Session = Depends(get_db)):
+def end_session(
+    session_id: int,
+    req: EndSessionRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),  # ✅ 260222 서은 - 인증 필요
+):
     """
     Role B: Rater end
     """
@@ -134,7 +154,11 @@ def end_session(session_id: int, req: EndSessionRequest, db: Session = Depends(g
 
 
 @router.get("/sessions/{session_id}")
-def get_session(session_id: int, db: Session = Depends(get_db)):
+def get_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),  # ✅ 260222 서은 - 인증 필요
+):
     """
     진행률/상태 조회
     """
@@ -163,7 +187,11 @@ class LegacyTurnResponse(BaseModel):
 
 
 @router.post("/turn", response_model=LegacyTurnResponse)
-def opic_turn_legacy(req: LegacyTurnRequest, db: Session = Depends(get_db)):
+def opic_turn_legacy(
+    req: LegacyTurnRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),  # ✅ 260222 서은 - 현재 로그인 사용자 주입
+):
     """
     기존 /api/opic/turn 호출 유지:
     - sessionId 없으면 세션 생성
@@ -181,11 +209,13 @@ def opic_turn_legacy(req: LegacyTurnRequest, db: Session = Depends(get_db)):
             raise HTTPException(status_code=400, detail="profileId 또는 profile이 필요합니다.")
         if not profile_dict.get("job"):
             raise HTTPException(status_code=400, detail="job은 필수입니다.")
-        profile_id = create_profile(db, profile_dict)
+
+        # ✅ 260222 서은 - user_id를 반드시 함께 저장
+        profile_id = create_profile(db, profile_dict, user_id=user.id)
 
     session_id = req.sessionId
     if not session_id:
-        session_id = create_session(db, profile_id, req.goalGrade, target_count=req.targetCount)
+        session_id = create_session(db, user.id, req.goalGrade, target_count=req.targetCount)
         # 레거시에서도 첫 질문 seed를 원하면 여기서 호출 가능 (선택)
         # seed_first_question(db, session_id)
 
@@ -201,7 +231,11 @@ def opic_turn_legacy(req: LegacyTurnRequest, db: Session = Depends(get_db)):
 
 # ✅ prefix가 이미 /api/opic 이므로, /start는 이렇게 등록해야 함
 @router.post("/start")
-def start_opic(payload: dict, db: Session = Depends(get_db)):
+def start_opic(
+    payload: dict,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),  # ✅ 260222 서은 - 현재 로그인 사용자 주입
+):
     """
     프론트에서 '저장/시작 버튼' 없이도 한 번에:
     - 프로필 get-or-create
@@ -218,8 +252,9 @@ def start_opic(payload: dict, db: Session = Depends(get_db)):
     if not profile.get("name") or not profile.get("job"):
         raise HTTPException(status_code=400, detail="profile.name, profile.job은 필수입니다.")
 
-    profile_id = create_profile(db, profile)
-    session_id = create_session(db, profile_id, goal, target_count=target)
+    # ✅ 260222 서은 - user_id를 반드시 함께 저장
+    profile_id = create_profile(db, profile, user_id=user.id)
+    session_id = create_session(db, user.id, goal, target_count=target)
     first = seed_first_question(db, session_id)
 
     return {

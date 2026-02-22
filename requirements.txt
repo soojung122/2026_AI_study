@@ -13,3 +13,7 @@ fastapi
 uvicorn
 
 google-cloud-texttospeech pygame
+
+passlib[bcrypt]
+python-jose[cryptography]
+email-validator

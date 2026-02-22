@@ -1,7 +1,19 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Header from "./Header";
 import MainScreen from "./MainScreen";
+
+// 260221 서은 파일 추가
+import Login from "./Login";
+import Register from "./Register";
+import ProtectedRoute from "./ProtectedRoute";
+import PublicOnlyRoute from "./PublicOnlyRoute";
+
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+
 import { startSession, turnSession, endSession } from "./api";
+
+// 260221 서은 - 경로 관련 라이브러리 추가 +  토큰, 세션연결
+import { clearToken, restoreSession } from "./auth";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -13,7 +25,7 @@ const DEFAULT_PROFILE = {
   speakingStyle: "natural", // UI용 키
 };
 
-const seedSessions = () => ([
+const seedSessions = () => [
   {
     id: "s1",
     title: "새 오픽 세션",
@@ -27,12 +39,12 @@ const seedSessions = () => ([
 
     // ✅ 백엔드 연동용
     backend: {
-      sessionId: null,  // int
-      profileId: null,  // int
-      status: "IDLE",   // IDLE|RUNNING|ENDED
+      sessionId: null, // int
+      profileId: null, // int
+      status: "IDLE", // IDLE|RUNNING|ENDED
     },
   },
-]);
+];
 
 function toApiProfile(p) {
   // 백엔드 schema: speaking_style, hobbies list
@@ -45,7 +57,8 @@ function toApiProfile(p) {
   };
 }
 
-export default function App() {
+/** ✅ 기존 오픽 화면(세션 UI)을 컴포넌트로 분리 */
+function OpicAppScreen({ onLogout }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [query, setQuery] = useState("");
 
@@ -112,7 +125,9 @@ export default function App() {
     if (next == null) return;
     setSessions((prev) =>
       prev.map((x) =>
-        x.id === id ? { ...x, title: next.trim() || x.title, updatedAt: Date.now() } : x
+        x.id === id
+          ? { ...x, title: next.trim() || x.title, updatedAt: Date.now() }
+          : x
       )
     );
   };
@@ -136,7 +151,6 @@ export default function App() {
     };
 
     const res = await startSession(payload);
-    // res: { profileId, sessionId, firstQuestion, turnIndex }
 
     updateActiveSession((s) => ({
       ...s,
@@ -173,7 +187,6 @@ export default function App() {
     const text = (userText ?? "").trim();
     if (!text) return;
 
-    // 1) 사용자 메시지 즉시 append
     updateActiveSession((s) => ({
       ...s,
       updatedAt: Date.now(),
@@ -183,7 +196,6 @@ export default function App() {
       ],
     }));
 
-    // 2) 백엔드 sessionId 없으면 먼저 시작
     let backendSessionId = activeSession.backend?.sessionId;
     if (!backendSessionId) {
       backendSessionId = await startBackendSession({
@@ -193,11 +205,8 @@ export default function App() {
       });
     }
 
-    // 3) 턴 진행
     const res = await turnSession(backendSessionId, text);
-    // res: { sessionId, questionText, turnIndex }
 
-    // 4) 다음 질문 append
     updateActiveSession((s) => ({
       ...s,
       updatedAt: Date.now(),
@@ -227,7 +236,7 @@ export default function App() {
       ...s,
       updatedAt: Date.now(),
       backend: { ...s.backend, status: "ENDED" },
-      result: report?.report ?? report, // 백엔드 응답 형태에 맞춰 유연 처리
+      result: report?.report ?? report,
     }));
   };
 
@@ -237,6 +246,7 @@ export default function App() {
         sidebarCollapsed={sidebarCollapsed}
         onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
         onNewSession={createSessionLocal}
+        onLogout={onLogout}
       />
 
       <MainScreen
@@ -250,11 +260,76 @@ export default function App() {
         onRenameSession={renameSession}
         activeSession={activeSession}
         updateActiveSession={updateActiveSession}
-        // ✅ 새로 추가: UI가 호출해야 실제로 움직임
         onStartSession={startBackendSession}
         onSendTurn={sendTurn}
         onEndSession={endBackendSession}
       />
     </div>
+  );
+}
+
+export default function App() {
+  const [booting, setBooting] = useState(true);
+  const [isAuthed, setIsAuthed] = useState(false);
+  const [user, setUser] = useState(null);
+
+  // 260221 서은 - 토큰 기반 세션 복구
+  const boot = async () => {
+    const { ok, user } = await restoreSession();
+    setIsAuthed(ok);
+    setUser(user);
+    setBooting(false);
+  };
+
+  useEffect(() => {
+    boot();
+  }, []);
+
+  // 260221 서은 - 로그아웃 시 토큰 제거 + 상태 초기화
+  const handleLogout = () => {
+    clearToken();
+    setIsAuthed(false);
+    setUser(null);
+  };
+
+  if (booting) return <div style={{ padding: 20 }}>로딩중...</div>;
+
+  return (
+    <BrowserRouter>
+      <Routes>
+        {/* 로그인 여부에 따라 바로 메인스크린으로 */}
+        <Route path="/" element={<Navigate to={isAuthed ? "/MainScreen" : "/login"} replace />} />
+
+        <Route
+          path="/login"
+          element={
+            <PublicOnlyRoute isAuthed={isAuthed}>
+              <Login onLoginSuccess={boot} />
+            </PublicOnlyRoute>
+          }
+        />
+
+        <Route
+          path="/register"
+          element={
+            <PublicOnlyRoute isAuthed={isAuthed}>
+              <Register />
+            </PublicOnlyRoute>
+          }
+        />
+
+        {/* ✅ 메인스크린(=오픽 화면) */}
+        <Route
+          path="/MainScreen"
+          element={
+            <ProtectedRoute isAuthed={isAuthed}>
+              <OpicAppScreen onLogout={handleLogout} />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
