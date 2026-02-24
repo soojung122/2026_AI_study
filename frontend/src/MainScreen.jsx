@@ -23,29 +23,59 @@ function toApiProfile(p) {
   };
 }
 
-function Bubble({ role, content, meta }) {
+/** ✅ Web Speech API TTS */
+function speakText(text, opts = {}) {
+  const t = (text ?? "").trim();
+  if (!t) return;
+
+  if (!("speechSynthesis" in window)) {
+    console.warn("Web Speech API (TTS) not supported");
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+
+  const utter = new SpeechSynthesisUtterance(t);
+  utter.lang = opts.lang || "en-US";
+  utter.rate = opts.rate ?? 1.0;
+  utter.pitch = opts.pitch ?? 1.0;
+  utter.volume = opts.volume ?? 1.0;
+
+  window.speechSynthesis.speak(utter);
+}
+
+function stopSpeak() {
+  if (!("speechSynthesis" in window)) return;
+  window.speechSynthesis.cancel();
+}
+
+/** ✅ Web Speech API STT */
+function getSpeechRecognition() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+function Bubble({ role, content, meta, onReplay, showReplay }) {
   const isUser = role === "user";
   return (
     <div className={`msg-row ${isUser ? "right" : "left"}`}>
       <div className={`avatar ${isUser ? "me" : "ai"}`}>{isUser ? "ME" : "AI"}</div>
       <div className={`bubble ${isUser ? "user" : "assistant"}`}>
         <div className="bubble-text">{content}</div>
-        {meta ? <div className="bubble-meta">{meta}</div> : null}
+
+        <div className="bubble-footer">
+          {meta ? <div className="bubble-meta">{meta}</div> : <div />}
+          {showReplay ? (
+            <button type="button" className="icon-btn small" title="다시 듣기" onClick={onReplay}>
+              🔊
+            </button>
+          ) : null}
+        </div>
       </div>
     </div>
   );
 }
 
-function Sidebar({
-  collapsed,
-  query,
-  setQuery,
-  sessions,
-  activeId,
-  setActiveId,
-  onRenameSession,
-  onDeleteSession,
-}) {
+function Sidebar({ collapsed, query, setQuery, sessions, activeId, setActiveId, onRenameSession, onDeleteSession }) {
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
       <div className="sidebar-search">
@@ -127,7 +157,10 @@ function SettingsPanel({ session, onChange }) {
           onChange={(e) =>
             setProfile(
               "hobbies",
-              e.target.value.split(",").map((x) => x.trim()).filter(Boolean)
+              e.target.value
+                .split(",")
+                .map((x) => x.trim())
+                .filter(Boolean)
             )
           }
         />
@@ -141,9 +174,7 @@ function SettingsPanel({ session, onChange }) {
         </select>
       </div>
 
-      <div className="hint">
-        * 이제부터 “턴 진행”은 백엔드(/api/opic/turn)로 수행합니다. (평가 JSON은 다음 단계에서 추가)
-      </div>
+      <div className="hint">* 이제부터 “턴 진행”은 백엔드(/api/opic/turn)로 수행합니다. (평가 JSON은 다음 단계에서 추가)</div>
     </div>
   );
 }
@@ -196,19 +227,13 @@ function ResultPanel({ session }) {
   );
 }
 
-
 export default function MainScreen() {
-  // if (!active.profile?.name || !active.profile?.job) {
-  // throw new Error("프로필의 name/job를 먼저 입력하세요.");
-  // }
-
   const [sessions, setSessions] = useState(() => [
     {
       id: uid(),
       title: "OPIc Practice",
       targetGrade: "IH",
       updatedAt: Date.now(),
-      // 백엔드와 연결되는 식별자(지금 단계에서는 생성만 받고 저장)
       serverSessionId: null,
       serverProfileId: null,
       profile: {
@@ -232,6 +257,26 @@ export default function MainScreen() {
   const [err, setErr] = useState("");
   const [activeTab, setActiveTab] = useState("chat");
 
+  /** ✅ STT state */
+  const [isRecording, setIsRecording] = useState(false);
+  const sttRef = useRef(null);
+
+  // ✅ STT 누적용 버퍼들
+  const baseInputRef = useRef("");   // 녹음 시작 시점 input
+  const finalBufferRef = useRef(""); // 확정(final) 누적
+  const interimRef = useRef("");     // interim(말하는 중)
+
+  // ✅ 마지막 interviewer 질문 저장 (스피커 버튼 재생용)
+  const lastQuestionText = useMemo(() => {
+    const turns = active?.turns ?? [];
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i].role === "interviewer" && (turns[i].content ?? "").trim()) {
+        return turns[i].content;
+      }
+    }
+    return "";
+  }, [active?.turns]);
+
   const listFiltered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return sessions;
@@ -249,9 +294,7 @@ export default function MainScreen() {
   const onRenameSession = (id) => {
     const title = prompt("새 세션 이름", sessions.find((s) => s.id === id)?.title ?? "");
     if (!title) return;
-    setSessions((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, title, updatedAt: Date.now() } : s))
-    );
+    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title, updatedAt: Date.now() } : s)));
   };
 
   const onDeleteSession = (id) => {
@@ -282,73 +325,163 @@ export default function MainScreen() {
     setActiveId(id);
   };
 
-  const appendTurn = (role, content) => {
+  // ✅ appendTurn에 옵션을 추가해서 interviewer면 자동 TTS
+  const appendTurn = (role, content, options = {}) => {
     updateActiveSession((s) => ({
       ...s,
       updatedAt: Date.now(),
       turns: [...(s.turns ?? []), { id: uid(), role, content, ts: Date.now() }],
     }));
-    // 간단 스크롤(있으면)
+
+    if (options.speak && role === "interviewer") {
+      speakText(content, { lang: "en-US", rate: 1.0, pitch: 1.0 });
+    }
+
     setTimeout(() => {
       if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }, 0);
   };
 
-const runTurn = async () => {
-  if (!active) return;
-
-  const userText = input.trim();
-  if (!userText) return;
-
-  setErr("");
-  setLoading(true);
-
-  // ✅ 사용자 답변 먼저 UI에 반영
-  appendTurn("user", userText);
-
-  try {
-    let serverSessionId = active.serverSessionId;
-    let serverProfileId = active.serverProfileId;
-
-    // ✅ 세션이 아직 없으면 먼저 startSession (firstQuestion까지 받는 /api/opic/start 기준)
-    if (!serverSessionId) {
-      const started = await startSession({
-        goalGrade: active.targetGrade,
-        targetCount: 12,
-        profile: toApiProfile(active.profile),
-      });
-      // started: { profileId, sessionId, firstQuestion, turnIndex }
-
-      serverSessionId = started.sessionId;
-      serverProfileId = started.profileId;
-
-      updateActiveSession((s) => ({
-        ...s,
-        serverSessionId,
-        serverProfileId,
-        updatedAt: Date.now(),
-      }));
-
-      // ✅ 첫 질문을 UI에 반영 (start에서 내려줄 때)
-      if (started.firstQuestion) {
-        appendTurn("interviewer", started.firstQuestion);
-      }
+  /** ✅ STT: 누적 버전 start/stop */
+  const startSTT = () => {
+    const SR = getSpeechRecognition();
+    if (!SR) {
+      alert("이 브라우저는 STT(Web Speech API)를 지원하지 않습니다. 크롬(Chrome)에서 시도해 주세요.");
+      return;
     }
+    if (loading) return;
 
-    // ✅ 턴 진행: 두 번째 인자는 "문자열 userInput" 이어야 함
-    const data = await turnSession(serverSessionId, userText);
-    // data: { sessionId, questionText, turnIndex }
+    setErr("");
+    stopSpeak();
 
-    appendTurn("interviewer", data.questionText);
+    // ✅ 시작 시 버퍼 초기화
+    baseInputRef.current = input;
+    finalBufferRef.current = "";
+    interimRef.current = "";
 
-    setInput("");
-  } catch (e) {
-    setErr(e?.message ?? "Unknown error");
-  } finally {
-    setLoading(false);
-  }
-};
+    const rec = new SR();
+    rec.lang = "en-US";        // 필요하면 "ko-KR"
+    rec.interimResults = true;
+    rec.continuous = true;
+    rec.maxAlternatives = 1;
 
+    rec.onresult = (e) => {
+      let finalChunk = "";
+      let interimChunk = "";
+
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const transcript = e.results[i][0]?.transcript || "";
+        if (e.results[i].isFinal) finalChunk += transcript;
+        else interimChunk += transcript;
+      }
+
+      // ✅ final은 누적
+      if (finalChunk.trim()) {
+        const add = finalChunk.trim();
+        finalBufferRef.current = (finalBufferRef.current + " " + add).trim();
+        interimRef.current = ""; // final 확정되면 interim은 비움
+      } else {
+        interimRef.current = interimChunk.trim();
+      }
+
+      const base = (baseInputRef.current || "").trim();
+      const finalAll = (finalBufferRef.current || "").trim();
+      const interim = (interimRef.current || "").trim();
+
+      const combined = [base, finalAll, interim].filter(Boolean).join(" ").replace(/\s+/g, " ");
+      setInput(combined);
+    };
+
+    rec.onerror = (e) => {
+      console.error("STT error:", e);
+      setErr(`STT error: ${e?.error || "unknown"}`);
+      setIsRecording(false);
+    };
+
+    rec.onend = () => {
+      setIsRecording(false);
+      // onend 되어도 finalBufferRef는 이미 input에 반영되어 있으니 그대로 남습니다.
+    };
+
+    sttRef.current = rec;
+    setIsRecording(true);
+
+    try {
+      rec.start();
+    } catch (err) {
+      console.error(err);
+      setIsRecording(false);
+    }
+  };
+
+  const stopSTT = () => {
+    try {
+      sttRef.current?.stop();
+    } catch (e) {}
+    setIsRecording(false);
+  };
+
+  const runTurn = async () => {
+    if (!active) return;
+
+    const userText = input.trim();
+    if (!userText) return;
+
+    setErr("");
+    setLoading(true);
+
+    appendTurn("user", userText);
+
+    if (isRecording) stopSTT();
+
+    try {
+      let serverSessionId = active.serverSessionId;
+
+      if (!serverSessionId) {
+        const started = await startSession({
+          goalGrade: active.targetGrade,
+          targetCount: 12,
+          profile: toApiProfile(active.profile),
+        });
+
+        serverSessionId = started.sessionId;
+
+        updateActiveSession((s) => ({
+          ...s,
+          serverSessionId: started.sessionId,
+          serverProfileId: started.profileId,
+          updatedAt: Date.now(),
+        }));
+
+        if (started.firstQuestion) {
+          appendTurn("interviewer", started.firstQuestion, { speak: true });
+        }
+      }
+
+      const data = await turnSession(serverSessionId, userText);
+      appendTurn("interviewer", data.questionText, { speak: true });
+
+      setInput("");
+    } catch (e) {
+      setErr(e?.message ?? "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    stopSpeak();
+    stopSTT();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, activeTab]);
+
+  useEffect(() => {
+    return () => {
+      stopSTT();
+      stopSpeak();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="layout">
@@ -369,11 +502,31 @@ const runTurn = async () => {
             ☰
           </button>
           <div className="topbar-title">{active?.title ?? "Session"}</div>
+
           <div className="topbar-tabs">
-            <button className={`tab-btn ${activeTab === "chat" ? "active" : ""}`} onClick={() => setActiveTab("chat")}>채팅</button>
-            <button className={`tab-btn ${activeTab === "profile" ? "active" : ""}`} onClick={() => setActiveTab("profile")}>프로필 생성</button>
+            <button className={`tab-btn ${activeTab === "chat" ? "active" : ""}`} onClick={() => setActiveTab("chat")}>
+              채팅
+            </button>
+            <button className={`tab-btn ${activeTab === "profile" ? "active" : ""}`} onClick={() => setActiveTab("profile")}>
+              프로필 생성
+            </button>
           </div>
+
           <div className="topbar-actions">
+            <button
+              type="button"
+              className="btn"
+              onClick={() => speakText(lastQuestionText, { lang: "en-US", rate: 1.0, pitch: 1.0 })}
+              disabled={!lastQuestionText}
+              title="마지막 질문 다시 듣기"
+            >
+              🔊 다시 듣기
+            </button>
+
+            <button type="button" className="btn" onClick={stopSpeak} title="읽기 중지">
+              ⏹ 중지
+            </button>
+
             <button
               className="btn"
               onClick={async () => {
@@ -390,12 +543,10 @@ const runTurn = async () => {
                   setLoading(false);
                 }
               }}
-
               disabled={loading || !active?.serverSessionId}
             >
               세션 종료
             </button>
-
           </div>
         </header>
 
@@ -405,14 +556,15 @@ const runTurn = async () => {
               <section className="chat">
                 <div className="chat-stream" ref={scrollRef}>
                   {(active?.turns ?? []).map((t) => (
-                  <Bubble
-                    key={t.id}
-                    role={t.role === "interviewer" ? "assistant" : t.role}             // "user" | "interviewer"
-                    content={t.content}
-                    meta={formatTime(t.ts)}
-                  />
-                ))}
-
+                    <Bubble
+                      key={t.id}
+                      role={t.role === "interviewer" ? "assistant" : t.role}
+                      content={t.content}
+                      meta={formatTime(t.ts)}
+                      showReplay={false}
+                      onReplay={() => {}}
+                    />
+                  ))}
                 </div>
 
                 <div className="chat-input">
@@ -421,8 +573,18 @@ const runTurn = async () => {
                     onChange={(e) => setInput(e.target.value)}
                     rows={2}
                     placeholder="내 답변을 입력하세요…"
-
                   />
+
+                  <button
+                    type="button"
+                    className={`btn ${isRecording ? "danger" : ""}`}
+                    onClick={isRecording ? stopSTT : startSTT}
+                    disabled={loading}
+                    title="마이크로 말하면 입력칸에 자동으로 적혀요"
+                  >
+                    {isRecording ? "🛑 말하기 중지" : "🎤 말하기"}
+                  </button>
+
                   <button className="btn primary" onClick={runTurn} disabled={loading}>
                     {loading ? "생성 중..." : "턴 진행"}
                   </button>
@@ -431,16 +593,11 @@ const runTurn = async () => {
                 {err ? <div className="error">Error: {err}</div> : null}
               </section>
 
-              <aside className="sidepanels">
-                {active ? <ResultPanel session={active} /> : null}
-              </aside>
+              <aside className="sidepanels">{active ? <ResultPanel session={active} /> : null}</aside>
             </>
           ) : (
-            // Profile tab: show SettingsPanel prominently
             <section className="profile-panel">
-              {active ? (
-                <SettingsPanel session={active} onChange={(updater) => updateActiveSession(updater)} />
-              ) : null}
+              {active ? <SettingsPanel session={active} onChange={(updater) => updateActiveSession(updater)} /> : null}
             </section>
           )}
         </div>

@@ -29,6 +29,7 @@ from security import (
 from deps import get_current_user
 
 load_dotenv()
+print("✅ RUNNING THIS MAIN.PY:", __file__)
 
 app = FastAPI()
 
