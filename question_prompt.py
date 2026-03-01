@@ -1,9 +1,10 @@
-# services/llm_gemini.py
+# question_prompt.py
 
 import os
 import json
 from google import genai
 
+from functools import lru_cache
 
 def _client():
     api_key = os.getenv("GEMINI_API_KEY")
@@ -14,6 +15,55 @@ def _client():
 
 MODEL_NAME = "models/gemini-2.5-flash"
 
+# =========================
+# 질문은행 로더 (여기에 추가)
+# =========================
+
+TOPIC_ROOT = os.getenv("OPIC_TOPIC_DIR", "topic")
+
+VALID_MODES = {"survey", "sudden", "advance"}
+
+def _grade_dir(goal_grade: str) -> str:
+    g = (goal_grade or "").upper().strip()
+    return "IM" if g == "IM" else "IH_AL"
+
+
+def _resolve_mode(goal_grade: str, mode: str) -> str:
+    m = (mode or "survey").lower().strip()
+
+    if m not in VALID_MODES:
+        return "survey"
+
+    if _grade_dir(goal_grade) == "IM" and m == "advance":
+        return "survey"
+
+    return m
+
+
+@lru_cache(maxsize=512)
+def _load_question_bank(goal_grade: str, mode: str, topic_name: str) -> list[str]:
+    """
+    mode는 'survey'/'sudden'/'advance' 처럼 이미 정규화된 값이 들어온다고 가정.
+    """
+    gdir = _grade_dir(goal_grade)
+
+    path = os.path.join(
+        TOPIC_ROOT,
+        gdir,
+        mode,
+        f"{topic_name.lower()}.txt",
+    )
+
+    if not os.path.exists(path):
+        return []
+
+    with open(path, "r", encoding="utf-8") as f:
+        return [
+            line.strip()
+            for line in f
+            if line.strip() and not line.startswith("#")
+        ]
+    
 
 # =========================
 # Level Prompting (IM/IH/AL)
@@ -93,6 +143,8 @@ def examiner_generate_question(
     goal_grade: str,
     history: list,
     last_user_answer: str | None,
+    topic_name: str,      # 추가
+    mode: str,            # 추가
     is_first: bool = False,
 ) -> str:
     """
@@ -110,6 +162,16 @@ def examiner_generate_question(
     # history가 너무 길면 모델이 산만해져서, "최근 N턴만" 쓰는 것도 좋아요.
     # (지금은 안전하게 마지막 6개만 사용)
     history_short = history[-6:] if isinstance(history, list) else history
+
+    # ✅ 여기 추가
+    resolved_mode = _resolve_mode(goal_grade, mode)
+    bank = _load_question_bank(goal_grade, resolved_mode, topic_name)
+
+    # ✅ 이 줄도 추가
+    if bank:
+        bank_block = "\n".join(f"- {q}" for q in bank[:40])
+    else:
+        bank_block = "(No question bank available. Create a natural OPIc question for this topic.)"
 
     # 첫 질문이면 토픽 자연스럽게 시작, 아니면 직전 답변을 기반으로 follow-up
     first_block = """
@@ -138,10 +200,20 @@ def examiner_generate_question(
 - 가능한 한 한 문장으로.
 
 Target grade: {goal_grade}
+Mode: {resolved_mode}
+Topic: {topic_name}
 
 {level_block}
 
 {mode_block}
+
+[QUESTION BANK RULE]
+- Your question MUST be based on the bank.
+- Pick ONE question from the bank OR rewrite ONE bank question slightly to fit the last answer.
+- Do NOT invent a completely new topic.
+
+Question bank:
+{bank_block}
 
 Profile (JSON-like):
 {profile}

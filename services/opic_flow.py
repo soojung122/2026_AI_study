@@ -2,6 +2,11 @@
 import json
 from datetime import datetime
 from typing import Dict, Any, List
+import os
+import random
+from functools import lru_cache
+import re
+
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -12,6 +17,7 @@ from models import OpicTurn as OpicTurnModel  # ✅ ORM Turn 모델은 이걸로
 
 from services.examiner import generate_next_question
 from services.rater import rate_session
+
 
 
 # ----------------------------
@@ -108,22 +114,164 @@ def _get_profile_dict(db: Session, profile_id: int) -> Dict[str, Any]:
     }
 
 
+TOPIC_ROOT = os.getenv("OPIC_TOPIC_DIR", "topic")
+
+def _grade_dir(goal_grade: str) -> str:
+    g = (goal_grade or "").upper().strip()
+    return "IM" if g == "IM" else "IH_AL"
+
+@lru_cache(maxsize=64)
+def _list_bank_topics(goal_grade: str, mode: str) -> list[str]:
+    """
+    topic/{IM|IH_AL}/{mode} 폴더 안의 .txt 파일명을 스캔해서
+    ["home", "cafe", ...] 형태로 반환
+    """
+    gdir = _grade_dir(goal_grade)
+    m = (mode or "survey").lower().strip()
+    folder = os.path.join(TOPIC_ROOT, gdir, m)
+
+    if not os.path.isdir(folder):
+        return []
+
+    topics = []
+    for fname in os.listdir(folder):
+        if fname.lower().endswith(".txt"):
+            stem = os.path.splitext(fname)[0].strip()
+            if stem:
+                topics.append(stem)
+
+    topics.sort()
+    return topics
+
+def _topic_exists_in_bank(goal_grade: str, mode: str, topic_name: str) -> bool:
+    topic = (topic_name or "").strip().lower()
+    if not topic:
+        return False
+    return topic in set(_list_bank_topics(goal_grade, mode))
+
+def _tokenize(s: str) -> set[str]:
+    s = (s or "").lower()
+    s = re.sub(r"[^a-z0-9_ ]+", " ", s)
+    return {t for t in s.split() if t}
+
+def normalize_topic_to_bank(goal_grade: str, mode: str, raw_topic: str) -> tuple[str, bool]:
+    """
+    raw_topic을 해당 mode 폴더의 txt 파일명 중 하나로 매칭.
+    return: (normalized_topic, matched_bool)
+    """
+    raw = (raw_topic or "").strip().lower()
+    if not raw:
+        return ("home", False)
+
+    bank_topics = _list_bank_topics(goal_grade, mode)
+    if not bank_topics:
+        return (raw, False)
+
+    # 1) 완전 일치
+    if raw in bank_topics:
+        return (raw, True)
+
+    raw_tokens = _tokenize(raw)
+
+    best = None
+    best_score = 0
+
+    for t in bank_topics:
+        t_tokens = _tokenize(t)
+
+        score = 0
+        if raw in t or t in raw:
+            score += 3
+        score += len(raw_tokens & t_tokens)
+
+        if score > best_score:
+            best_score = score
+            best = t
+
+    if best is not None and best_score >= 1:
+        return (best, True)
+
+    return (raw, False)
+
+def pick_survey_topic_from_profile_dict(profile: dict, goal_grade: str, min_n=2, max_n=3) -> str:
+    """
+    survey:
+    - profile(job+hobbies)에서 후보를 만들고 2~3개 샘플링 후 1개 선택
+    - 그 topic을 survey 은행 파일명으로 매칭 시도
+    - ✅ 매칭 실패하면 sudden 은행에서 랜덤 topic으로 fallback
+    """
+    candidates = []
+
+    job = (profile.get("job") or "").strip().lower()
+    if job:
+        candidates.append(job)
+
+    hobbies = profile.get("hobbies") or []
+    for h in hobbies:
+        s = str(h).strip().lower()
+        if s:
+            candidates.append(s)
+
+    candidates = list({c for c in candidates if c})
+    if not candidates:
+        return "home"
+
+    n = random.randint(min_n, min(max_n, len(candidates)))
+    subset = random.sample(candidates, n)
+    chosen = random.choice(subset)
+
+    normalized, matched = normalize_topic_to_bank(goal_grade, "survey", chosen)
+
+    # ✅ 매칭 성공이면 그걸 사용
+    if matched and _topic_exists_in_bank(goal_grade, "survey", normalized):
+        return normalized
+
+    # ✅ 매칭 실패면 sudden 은행에서 랜덤 topic
+    return pick_sudden_topic_from_bank(goal_grade)
+
+
+def pick_sudden_topic_from_bank(goal_grade: str) -> str:
+    """
+    sudden: profile에서 가져오지 않고, sudden 폴더의 txt 중 랜덤으로 선택
+    """
+    topics = _list_bank_topics(goal_grade, "sudden")
+    return random.choice(topics) if topics else "home"
+
+def decide_topic_name(profile: dict, goal_grade: str, mode: str) -> str:
+    m = (mode or "survey").lower().strip()
+    gdir = _grade_dir(goal_grade)
+
+    if m == "survey":
+        return pick_survey_topic_from_profile_dict(profile, goal_grade)
+
+    if m == "sudden":
+        topics = _list_bank_topics(goal_grade, "sudden")
+        return random.choice(topics) if topics else "home"
+
+    if m == "advance":
+        # IM에는 advance 폴더가 없으니 survey 정책(=profile 기반)으로 처리
+        if gdir == "IM":
+            return pick_survey_topic_from_profile_dict(profile, goal_grade)
+
+        topics = _list_bank_topics(goal_grade, "advance")
+        return random.choice(topics) if topics else "home"
+
+    return pick_survey_topic_from_profile_dict(profile, goal_grade)
+
 # ----------------------------
 # Session UX helpers
 # ----------------------------
 def seed_first_question(db: Session, session_id: int) -> Dict[str, Any]:
-    """
-    세션 시작 직후(사용자 답변 전에) 첫 질문을 생성/저장.
-    /api/opic/sessions 응답에서 firstQuestion으로 내려주기 좋음.
-    """
+
     sess = db.query(OpicSession).filter(OpicSession.session_id == session_id).first()
     if not sess:
         raise ValueError("session not found")
 
-    # ❌ OpicSession에는 profile_id가 없음 (현재 모델은 user_id만 있음)
-    # profile = _get_profile_dict(db, sess.profile_id)
-    # ✅ OpicSession.user_id로 프로필(=user_profiles.user_id) 조회
     profile = _get_profile_dict(db, sess.user_id)
+
+    # ✅ 추가
+    mode = getattr(sess, "mode", "survey")
+    topic_name = decide_topic_name(profile, sess.goal_grade, mode)
 
     first_q = generate_next_question(
         profile=profile,
@@ -131,10 +279,17 @@ def seed_first_question(db: Session, session_id: int) -> Dict[str, Any]:
         history=[],
         last_user_answer=None,
         is_first=True,
+        topic_name=topic_name,
+        mode=mode,
     )
 
     save_turn(db, session_id, "EXAMINER", first_q)
-    return {"sessionId": session_id, "questionText": first_q, "turnIndex": 0}
+
+    return {
+        "sessionId": session_id,
+        "questionText": first_q,
+        "turnIndex": 0,
+    }
 
 
 def get_session_summary(db: Session, session_id: int) -> Dict[str, Any]:
@@ -163,49 +318,45 @@ def get_session_summary(db: Session, session_id: int) -> Dict[str, Any]:
 # Role A: Examiner (질문 생성)
 # ----------------------------
 def run_examiner_turn(db: Session, session_id: int, user_input: str) -> Dict[str, Any]:
-    """
-    사용자의 답변을 저장하고,
-    그 답변 기반으로 Examiner가 '다음 질문 1개'만 생성하여 반환/저장.
-    """
+
     sess = db.query(OpicSession).filter(OpicSession.session_id == session_id).first()
     if not sess:
         raise ValueError("session not found")
 
-    # ❌ OpicSession에는 profile_id가 없음
-    # profile = _get_profile_dict(db, sess.profile_id)
-    # ✅ OpicSession.user_id로 프로필 조회
     profile = _get_profile_dict(db, sess.user_id)
 
-    # ✅ turn 목록 조회
+    # ✅ 추가 (핵심)
+    mode = getattr(sess, "mode", "survey")
+    topic_name = decide_topic_name(profile, sess.goal_grade, mode)
+
     turns = get_turns(db, session_id)
 
-    # 마지막 Examiner 질문 찾기
     last_examiner_q = None
     for t in reversed(turns):
         if t.role == "EXAMINER":
             last_examiner_q = t.text
             break
 
-    # Examiner 질문이 하나도 없으면 첫 질문을 seed
     if not last_examiner_q:
         seeded = seed_first_question(db, session_id)
-        last_examiner_q = seeded["questionText"]
-
-        # ✅ seed 했으면 최신 turns를 다시 가져오는 게 안전 (history 구성 정확도↑)
         turns = get_turns(db, session_id)
 
-    # 사용자 답변 저장
     save_turn(db, session_id, "USER", user_input)
 
-    # 최신 N턴만 history로 전달
-    history = [{"role": t.role, "text": t.text} for t in turns[-12:]] + [{"role": "USER", "text": user_input}]
+    history = (
+        [{"role": t.role, "text": t.text} for t in turns[-12:]]
+        + [{"role": "USER", "text": user_input}]
+    )
 
+    # ✅ topic_name, mode 전달
     next_q = generate_next_question(
         profile=profile,
         goal_grade=sess.goal_grade,
         history=history,
         last_user_answer=user_input,
         is_first=False,
+        topic_name=topic_name,
+        mode=mode,
     )
 
     save_turn(db, session_id, "EXAMINER", next_q)

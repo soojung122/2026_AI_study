@@ -1,0 +1,11 @@
+You are at the car rental company in New York City because you need to
+rent a car for a week. Please ask 3 or 4 questions about renting a car
+for a week.
+
+You don’t have an international driver’s license or an American driver’s
+license. Please explain what your license says and suggest 2 or 3
+alternatives to rent a car.
+
+Have you ever rented a car for your traveling? What was the reason you
+rented a car? What happened, and how did you solve it? Why was the
+experience so memorable?
