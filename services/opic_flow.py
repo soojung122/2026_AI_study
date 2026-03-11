@@ -27,7 +27,7 @@ def create_profile(db: Session, profile: dict, user_id: int) -> int:
     # ✅ 유저별 프로필 1개이므로 user_id로만 찾음
     existing = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
 
-    hobbies = profile.get("hobbies", [])
+    hobbies = profile.get("hobbies", {})
 
     if existing:
         # ✅ 이미 있으면 업데이트(원하면). "1개만" 유지
@@ -101,9 +101,9 @@ def _get_profile_dict(db: Session, profile_id: int) -> Dict[str, Any]:
         raise ValueError("profile not found")
 
     try:
-        hobbies = json.loads(prof.hobbies_json) if prof.hobbies_json else []
+        hobbies = json.loads(prof.hobbies_json) if prof.hobbies_json else {}
     except Exception:
-        hobbies = []
+        hobbies = {}
 
     return {
         "name": prof.name,
@@ -194,23 +194,29 @@ def normalize_topic_to_bank(goal_grade: str, mode: str, raw_topic: str) -> tuple
     return (raw, False)
 
 def pick_survey_topic_from_profile_dict(profile: dict, goal_grade: str, min_n=2, max_n=3) -> str:
-    """
-    survey:
-    - profile(job+hobbies)에서 후보를 만들고 2~3개 샘플링 후 1개 선택
-    - 그 topic을 survey 은행 파일명으로 매칭 시도
-    - ✅ 매칭 실패하면 sudden 은행에서 랜덤 topic으로 fallback
-    """
     candidates = []
 
     job = (profile.get("job") or "").strip().lower()
     if job:
         candidates.append(job)
 
-    hobbies = profile.get("hobbies") or []
-    for h in hobbies:
-        s = str(h).strip().lower()
-        if s:
-            candidates.append(s)
+    hobbies = profile.get("hobbies") or {}
+
+    # hobbies가 dict(survey 전체)인 경우
+    if isinstance(hobbies, dict):
+        for key in ["leisure", "hobby", "exercise", "travel"]:
+            values = hobbies.get(key) or []
+            for v in values:
+                s = str(v).strip().lower()
+                if s:
+                    candidates.append(s)
+
+    # 혹시 예전 데이터가 list인 경우도 호환
+    elif isinstance(hobbies, list):
+        for h in hobbies:
+            s = str(h).strip().lower()
+            if s:
+                candidates.append(s)
 
     candidates = list({c for c in candidates if c})
     if not candidates:
@@ -222,11 +228,9 @@ def pick_survey_topic_from_profile_dict(profile: dict, goal_grade: str, min_n=2,
 
     normalized, matched = normalize_topic_to_bank(goal_grade, "survey", chosen)
 
-    # ✅ 매칭 성공이면 그걸 사용
     if matched and _topic_exists_in_bank(goal_grade, "survey", normalized):
         return normalized
 
-    # ✅ 매칭 실패면 sudden 은행에서 랜덤 topic
     return pick_sudden_topic_from_bank(goal_grade)
 
 

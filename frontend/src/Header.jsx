@@ -1,6 +1,14 @@
 import React from "react";
+import { clearToken, getToken } from "./auth";
 
 export default function Header({ sidebarCollapsed, onToggleSidebar, onNewSession }) {
+  const handleLogout = () => {
+    clearToken();
+    window.location.href = "/login";
+  };
+
+  const loggedIn = !!getToken();
+
   return (
     <div className="topbar">
       <div className="topbar-left">
@@ -14,6 +22,12 @@ export default function Header({ sidebarCollapsed, onToggleSidebar, onNewSession
       </div>
 
       <div className="topbar-right">
+        {loggedIn && (
+          <button className="btn" onClick={handleLogout}>
+            로그아웃
+          </button>
+        )}
+
         <button className="primary-btn" onClick={onNewSession}>
           + New Session
         </button>

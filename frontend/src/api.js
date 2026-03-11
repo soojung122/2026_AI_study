@@ -54,6 +54,15 @@ export function startSession(payload) {
 }
 
 /**
+ * 프로필 가져오기
+ */
+export async function getMyOpicProfile() {
+  return apiFetch("/api/opic/profile", {
+    method: "GET",
+  });
+}
+
+/**
  * 턴 진행
  */
 export function turnSession(sessionId, userInput) {

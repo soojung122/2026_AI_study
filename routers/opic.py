@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 
+
 from db import SessionLocal
 from services.opic_flow import (
     create_profile,
@@ -12,7 +13,9 @@ from services.opic_flow import (
     run_examiner_turn,
     end_and_rate_session,
     get_session_summary,
+    _get_profile_dict,   # ✅ 추가
 )
+
 
 # ✅ 260222 서은 - 로그인 사용자 주입을 위해 추가
 from deps import get_current_user
@@ -30,11 +33,13 @@ def get_db():
 
 
 # ---------- Schemas ----------
+
+
 class ProfileIn(BaseModel):
     name: str
-    job: str  # ✅ UK(name, job) 기준이면 job은 필수로 받는 게 안전
+    job: str
     city: Optional[str] = None
-    hobbies: List[str] = []
+    hobbies: Dict[str, Any] = Field(default_factory=dict)
     speaking_style: Optional[str] = None
 
 
@@ -257,9 +262,29 @@ def start_opic(
     session_id = create_session(db, user.id, goal, target_count=target)
     first = seed_first_question(db, session_id)
 
+    # ✅ DB에 저장된 실제 profile 다시 조회
+    saved_profile = _get_profile_dict(db, profile_id)
     return {
         "profileId": profile_id,
         "sessionId": session_id,
         "firstQuestion": first["questionText"],
         "turnIndex": first["turnIndex"],
+        "profile": saved_profile,   # ✅ 추가
     }
+
+@router.get("/profile")
+def get_my_opic_profile(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    try:
+        profile = _get_profile_dict(db, user.id)
+        return {
+            "profileId": user.id,
+            "profile": profile,
+        }
+    except Exception:
+        return {
+            "profileId": user.id,
+            "profile": None,
+        }

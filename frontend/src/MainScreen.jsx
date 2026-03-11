@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { startSession, turnSession, endSession } from "./api";
+import { startSession, turnSession, endSession, getMyOpicProfile } from "./api";
+
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -14,12 +15,14 @@ function truncate(s, n = 28) {
 }
 
 function toApiProfile(p) {
+  const s = p.survey || {};
+
   return {
-    name: p.name,
-    job: p.job,
-    city: p.city,
-    hobbies: p.hobbies ?? [],
-    speaking_style: p.speakingStyle ?? "natural",
+    name: "user",
+    job: s.occupation || "",
+    city: s.residence || "",
+    hobbies: s,   // ⭐ survey 전체를 hobbies에 넣음
+    speaking_style: p.speakingStyle || "natural",
   };
 }
 
@@ -111,6 +114,17 @@ function Sidebar({ collapsed, query, setQuery, sessions, activeId, setActiveId, 
 function SettingsPanel({ session, onChange }) {
   const profile = session.profile;
 
+  const survey = profile.survey ?? {
+    occupation: "",
+    isStudent: "",
+    recentCourse: "",
+    residence: "",
+    leisure: [],
+    hobby: [],
+    exercise: [],
+    travel: [],
+  };
+
   const set = (key, val) =>
     onChange((s) => ({
       ...s,
@@ -118,63 +132,248 @@ function SettingsPanel({ session, onChange }) {
       [key]: val,
     }));
 
-  const setProfile = (k, v) =>
+  const setSurvey = (key, value) =>
     onChange((s) => ({
       ...s,
       updatedAt: Date.now(),
-      profile: { ...s.profile, [k]: v },
+      profile: {
+        ...s.profile,
+        survey: {
+          ...s.profile.survey,
+          [key]: value,
+        },
+      },
     }));
+
+  const toggleSurveyArray = (key, item) => {
+    const current = survey[key] ?? [];
+    const next = current.includes(item)
+      ? current.filter((x) => x !== item)
+      : [...current, item];
+
+    setSurvey(key, next);
+  };
+
+  const leisureGroups = [
+  {
+    key: "leisure",
+    title: "여가 활동",
+    items: [
+      "영화 보기",
+      "클럽/나이트 가기",
+      "박물관 가기",
+      "주거 개선",
+      "해변 가기",
+      "스포츠 관람",
+      "요리 관련 프로그램 시청",
+      "공연 보기",
+      "게임하기",
+      "캠핑하기",
+      "SNS글 올리기",
+      "구직 활동",
+      "해변 가기",
+      "술집 / 바 가기",
+      "친구들과 문자 하기",
+      "당구 치기",
+      "자원 봉사",
+      "차 드라이브 하기",
+      "시험 대비 과정 수강",
+      "뉴스 보거나 듣기",
+      "카페 / 커피 전문점 가기",
+      "체스",
+      "콘서트 보기",
+      "TV 시청",
+      "쇼핑",
+      "음악 감상",
+      "리얼리티 쇼 보기",
+    ],
+  },
+  {
+    key: "hobby",
+    title: "취미 / 관심사",
+    items: [
+      "아이에게 책 읽어주기",
+      "악기 연주하기",
+      "독서",
+      "사진 촬영하기",
+      "글쓰기",
+      "요리 하기",
+      "신문 읽기",
+      "음악 감상하기",
+      "애완동물 키우기",
+      "그림 그리기",
+      "혼자 노래 부르거나 합창",
+      "춤추기",
+      "주식 투자",
+      "여행 관련 잡지나 블로그 읽기",
+    ],
+  },
+  {
+    key: "exercise",
+    title: "운동",
+    items: [
+      "농구",
+      "야구/소프트볼",
+      "축구",
+      "미식축구",
+      "하키",
+      "크로켓",
+      "골프",
+      "배구",
+      "테니스",
+      "배드민턴",
+      "탁구",
+      "수영",
+      "자전거",
+      "스키/스노보드",
+      "아이스 스케이트",
+      "태권도",
+      "운동 수업 수강하기",
+      "조깅",
+      "걷기",
+      "요가",
+      "하이킹, 트레킹",
+      "낚시",
+      "헬스",
+      "운동을 전혀 하지 않음",
+    ],
+  },
+  {
+    key: "travel",
+    title: "여행 / 휴가",
+    items: [
+      "국내 출장",
+      "회외 출장",
+      "집에서 보내는 휴가",
+      "국내 여행",
+      "해외 여행",
+    ],
+  },
+];
 
   return (
     <div className="panel">
-      <div className="panel-title">세션 설정</div>
+      <div className="panel-title">오픽 서베이</div>
 
-      <div className="form-row">
-        <label>목표 등급</label>
-        <select value={session.targetGrade} onChange={(e) => set("targetGrade", e.target.value)}>
-          <option value="IM">IM</option>
-          <option value="IH">IH</option>
-          <option value="AL">AL</option>
-        </select>
-      </div>
+      <div className="survey-section compact-top-row">
+        <div className="compact-field">
+          <label>목표 등급</label>
+          <select
+            value={session.targetGrade}
+            onChange={(e) => set("targetGrade", e.target.value)}
+          >
+            <option value="IM">IM</option>
+            <option value="IH">IH</option>
+            <option value="AL">AL</option>
+          </select>
+        </div>
 
-      <div className="form-row">
-        <label>이름</label>
-        <input value={profile.name} onChange={(e) => setProfile("name", e.target.value)} />
-      </div>
-      <div className="form-row">
-        <label>직업/역할</label>
-        <input value={profile.job} onChange={(e) => setProfile("job", e.target.value)} />
-      </div>
-      <div className="form-row">
-        <label>도시</label>
-        <input value={profile.city} onChange={(e) => setProfile("city", e.target.value)} />
-      </div>
-      <div className="form-row">
-        <label>취미 (콤마로 구분)</label>
-        <input
-          value={profile.hobbies.join(", ")}
-          onChange={(e) =>
-            setProfile(
-              "hobbies",
-              e.target.value
-                .split(",")
-                .map((x) => x.trim())
-                .filter(Boolean)
-            )
-          }
-        />
-      </div>
-      <div className="form-row">
-        <label>말하기 톤</label>
-        <select value={profile.speakingStyle} onChange={(e) => setProfile("speakingStyle", e.target.value)}>
-          <option value="natural">natural</option>
-          <option value="confident">confident</option>
-          <option value="calm">calm</option>
-        </select>
+        <div className="compact-field">
+          <label>말하기 톤</label>
+          <select
+            value={profile.speakingStyle ?? "natural"}
+            onChange={(e) =>
+              onChange((s) => ({
+                ...s,
+                updatedAt: Date.now(),
+                profile: {
+                  ...s.profile,
+                  speakingStyle: e.target.value,
+                },
+              }))
+            }
+          >
+            <option value="natural">natural</option>
+            <option value="confident">confident</option>
+            <option value="calm">calm</option>
+          </select>
+        </div>
       </div>
 
-      <div className="hint">* 이제부터 “턴 진행”은 백엔드(/api/opic/turn)로 수행합니다. (평가 JSON은 다음 단계에서 추가)</div>
+      <div className="survey-section">
+        <div className="question-title">1. 현재 귀하는 어느 분야에 종사하고 계신가요?</div>
+        <div className="form-row">
+          <select
+            value={survey.occupation}
+            onChange={(e) => setSurvey("occupation", e.target.value)}
+          >
+            <option value="">선택하세요</option>
+            <option value="사업 / 회사">사업 / 회사</option>
+            <option value="재택근무 / 재택사업">재택근무 / 재택사업</option>
+            <option value="교사 / 교육자">교사 / 교육자</option>
+            <option value="일 경험 없음">일 경험 없음</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="survey-section">
+        <div className="question-title">2. 현재 당신은 학생인가요?</div>
+        <div className="form-row">
+          <select
+            value={survey.isStudent}
+            onChange={(e) => setSurvey("isStudent", e.target.value)}
+          >
+            <option value="">선택하세요</option>
+            <option value="예">예</option>
+            <option value="아니요">아니요</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="survey-section">
+        <div className="question-title">3. 최근 어떤 강의를 수강했습니까?</div>
+        <div className="form-row">
+          <select
+            value={survey.recentCourse}
+            onChange={(e) => setSurvey("recentCourse", e.target.value)}
+          >
+            <option value="">선택하세요</option>
+            <option value="학위 과정 수업">학위 과정 수업</option>
+            <option value="전문 기술 향상을 위한 평생 학습">전문 기술 향상을 위한 평생 학습</option>
+            <option value="어학 수업">어학 수업</option>
+            <option value="수강 후 5년 이상 지남">수강 후 5년 이상 지남</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="survey-section">
+        <div className="question-title">4. 현재 어디에 살고 계십니까?</div>
+        <div className="form-row">
+          <select
+            value={survey.residence}
+            onChange={(e) => setSurvey("residence", e.target.value)}
+          >
+            <option value="">선택하세요</option>
+            <option value="개인 주택이나 아파트에 홀로 거주">개인 주택이나 아파트에 홀로 거주</option>
+            <option value="친구 / 룸메이트와 함께 거주">친구 / 룸메이트와 함께 거주</option>
+            <option value="가족과 함께 거주">가족과 함께 거주</option>
+            <option value="학교 기숙사">학교 기숙사</option>
+            <option value="군대 막사 / 군 시설">군대 막사 / 군 시설</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="survey-section">
+        <div className="question-title">5. 여가 활동 (여러 개 선택 가능)</div>
+
+        {leisureGroups.map((group) => (
+          <div key={group.title} className="leisure-group">
+            <div className="leisure-group-title">{group.title}</div>
+            <div className="check-grid">
+              {group.items.map((item) => (
+                <label key={item} className="check-card">
+                  <input
+                    type="checkbox"
+                    checked={(survey[group.key] ?? []).includes(item)}
+                    onChange={() => toggleSurveyArray(group.key, item)}
+                  />
+                  <span>{item}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -226,8 +425,20 @@ function ResultPanel({ session }) {
     </div>
   );
 }
+/*
+직업: 사업 / 회사
 
+학생 여부: 
+
+최근 강의: 
+
+거주 형태: 
+
+여가 활동: 
+*/
 export default function MainScreen() {
+  
+
   const [sessions, setSessions] = useState(() => [
     {
       id: uid(),
@@ -237,10 +448,16 @@ export default function MainScreen() {
       serverSessionId: null,
       serverProfileId: null,
       profile: {
-        name: "",
-        job: "",
-        city: "",
-        hobbies: [],
+        survey: {
+          occupation: "",
+          isStudent: "",
+          recentCourse: "",
+          residence: "",
+          leisure: [],      // 여가 활동 (외출/활동)
+          hobby: [],        // 취미/관심사
+          exercise: [],     // 운동
+          travel: [],       // 여행
+        },
         speakingStyle: "natural",
       },
       turns: [],
@@ -317,7 +534,19 @@ export default function MainScreen() {
         updatedAt: now,
         serverSessionId: null,
         serverProfileId: null,
-        profile: { name: "", job: "", city: "", hobbies: [], speakingStyle: "natural" },
+        profile: {
+          survey: {
+            occupation: "",
+            isStudent: "",
+            recentCourse: "",
+            residence: "",
+            leisure: [],      // 여가 활동 (외출/활동)
+            hobby: [],        // 취미/관심사
+            exercise: [],     // 운동
+            travel: [],       // 여행
+          },
+          speakingStyle: "natural",
+        },
         turns: [],
       },
       ...prev,
@@ -422,52 +651,62 @@ export default function MainScreen() {
   };
 
   const runTurn = async () => {
-    if (!active) return;
+  if (!active) return;
 
-    const userText = input.trim();
-    if (!userText) return;
+  const userText = input.trim();
+  if (!userText) return;
 
-    setErr("");
-    setLoading(true);
+  setErr("");
+  setLoading(true);
 
-    appendTurn("user", userText);
+  appendTurn("user", userText);
 
-    if (isRecording) stopSTT();
+  if (isRecording) stopSTT();
 
-    try {
-      let serverSessionId = active.serverSessionId;
+  try {
+    let serverSessionId = active.serverSessionId;
 
-      if (!serverSessionId) {
-        const started = await startSession({
-          goalGrade: active.targetGrade,
-          targetCount: 12,
-          profile: toApiProfile(active.profile),
-        });
+    if (!serverSessionId) {
+      const started = await startSession({
+        goalGrade: active.targetGrade,
+        targetCount: 12,
+        profile: toApiProfile(active.profile),
+      });
 
-        serverSessionId = started.sessionId;
+      serverSessionId = started.sessionId;
 
-        updateActiveSession((s) => ({
-          ...s,
-          serverSessionId: started.sessionId,
-          serverProfileId: started.profileId,
-          updatedAt: Date.now(),
-        }));
+      updateActiveSession((s) => ({
+        ...s,
+        serverSessionId: started.sessionId,
+        serverProfileId: started.profileId,
+        updatedAt: Date.now(),
+        profile: started.profile
+          ? {
+              ...s.profile,
+              name: started.profile.name ?? "",
+              job: started.profile.job ?? "",
+              city: started.profile.city ?? "",
+              survey: started.profile.hobbies ?? s.profile.survey,
+              speakingStyle: started.profile.speaking_style ?? "natural",
+            }
+          : s.profile,
+      }));
 
-        if (started.firstQuestion) {
-          appendTurn("interviewer", started.firstQuestion, { speak: true });
-        }
+      if (started.firstQuestion) {
+        appendTurn("interviewer", started.firstQuestion, { speak: true });
       }
-
-      const data = await turnSession(serverSessionId, userText);
-      appendTurn("interviewer", data.questionText, { speak: true });
-
-      setInput("");
-    } catch (e) {
-      setErr(e?.message ?? "Unknown error");
-    } finally {
-      setLoading(false);
     }
-  };
+
+    const data = await turnSession(serverSessionId, userText);
+    appendTurn("interviewer", data.questionText, { speak: true });
+
+    setInput("");
+  } catch (e) {
+    setErr(e?.message ?? "Unknown error");
+  } finally {
+    setLoading(false);
+  }
+};
 
   useEffect(() => {
     stopSpeak();
@@ -482,6 +721,43 @@ export default function MainScreen() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== "chat" || !active) return;
+
+    let cancelled = false;
+
+    async function loadProfileFromDB() {
+      try {
+        const res = await getMyOpicProfile();
+
+        if (cancelled) return;
+        if (!res?.profile) return;
+
+        updateActiveSession((s) => ({
+          ...s,
+          serverProfileId: res.profileId ?? s.serverProfileId,
+          updatedAt: Date.now(),
+          profile: {
+            ...s.profile,
+            name: res.profile.name ?? "",
+            job: res.profile.job ?? "",
+            city: res.profile.city ?? "",
+            survey: res.profile.hobbies ?? s.profile.survey,
+            speakingStyle: res.profile.speaking_style ?? "natural",
+          },
+        }));
+      } catch (e) {
+        console.error("profile load failed:", e);
+      }
+    }
+
+    loadProfileFromDB();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, activeId]);
 
   return (
     <div className="layout">
@@ -513,6 +789,7 @@ export default function MainScreen() {
           </div>
 
           <div className="topbar-actions">
+
             <button
               type="button"
               className="btn"
