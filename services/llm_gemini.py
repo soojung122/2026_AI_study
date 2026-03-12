@@ -2,6 +2,7 @@
 
 import os
 import json
+from typing import Optional
 from google import genai
 
 
@@ -82,15 +83,28 @@ def rater_evaluate_session_json(
     goal_grade: str,
     target_count: int,
     transcript: list,
+    *,
+    system_prompt: Optional[str] = None,
+    user_prompt: Optional[str] = None,
 ) -> dict:
     """
     - 세션 전체를 루브릭 기반으로 평가
     - 반드시 JSON으로만 출력
+    - system_prompt/user_prompt 주입 가능
     """
 
     client = _client()
 
-    prompt = f"""
+    if system_prompt is not None and user_prompt is not None:
+        prompt = f"""SYSTEM:
+{system_prompt}
+
+USER:
+{user_prompt}
+""".strip()
+    else:
+        # (기존 동작 유지용 fallback)
+        prompt = f"""
 You are an OPIc certified rater.
 
 Evaluate the candidate based on the transcript.
@@ -134,6 +148,10 @@ Transcript:
     try:
         return json.loads(text)
     except Exception:
-        # Gemini가 가끔 ```json ``` 감싸서 보낼 수 있음
         cleaned = text.replace("```json", "").replace("```", "").strip()
+        # 앞뒤 텍스트 방어: 첫 { ~ 마지막 } 잘라 파싱
+        if "{" in cleaned and "}" in cleaned:
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            cleaned = cleaned[start:end + 1]
         return json.loads(cleaned)
