@@ -7,30 +7,29 @@ import random
 from functools import lru_cache
 import re
 
-
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from sqlalchemy.exc import IntegrityError
 
 from models import UserProfile, OpicSession
-from models import OpicTurn as OpicTurnModel  # ✅ ORM Turn 모델은 이걸로만 사용
+from models import OpicTurn as OpicTurnModel
 
 from services.examiner import generate_next_question
 from services.rater import rate_session
 
+
+# 🔥 세션 상태 저장 (핵심)
+SESSION_STATE = {}
 
 
 # ----------------------------
 # DB helpers
 # ----------------------------
 def create_profile(db: Session, profile: dict, user_id: int) -> int:
-    # ✅ 유저별 프로필 1개이므로 user_id로만 찾음
     existing = db.query(UserProfile).filter(UserProfile.user_id == user_id).first()
 
     hobbies = profile.get("hobbies", {})
 
     if existing:
-        # ✅ 이미 있으면 업데이트(원하면). "1개만" 유지
         existing.name = profile["name"]
         existing.job = profile["job"]
         existing.city = profile.get("city")
@@ -38,11 +37,10 @@ def create_profile(db: Session, profile: dict, user_id: int) -> int:
         existing.speaking_style = profile.get("speaking_style")
 
         db.commit()
-        return existing.user_id  # ✅ PK 반환
+        return existing.user_id
 
-    # ✅ 없으면 생성
     db_obj = UserProfile(
-        user_id=user_id,  # ✅ PK
+        user_id=user_id,
         name=profile["name"],
         job=profile["job"],
         city=profile.get("city"),
@@ -51,12 +49,12 @@ def create_profile(db: Session, profile: dict, user_id: int) -> int:
     )
     db.add(db_obj)
     db.commit()
-    return db_obj.user_id  # ✅ PK 반환
+    return db_obj.user_id
 
 
 def create_session(db: Session, user_id: int, goal_grade: str, target_count: int = 12) -> int:
     db_obj = OpicSession(
-        user_id=user_id,  # ✅ profile_id -> user_id
+        user_id=user_id,
         goal_grade=goal_grade,
         target_count=target_count,
         status="RUNNING",
@@ -68,7 +66,6 @@ def create_session(db: Session, user_id: int, goal_grade: str, target_count: int
 
 
 def save_turn(db: Session, session_id: int, role: str, text: str) -> None:
-    # ✅ ORM 모델로 저장
     db.add(OpicTurnModel(session_id=session_id, role=role, text=text))
     db.commit()
 
@@ -76,7 +73,6 @@ def save_turn(db: Session, session_id: int, role: str, text: str) -> None:
 def get_turns(db: Session, session_id: int) -> List[OpicTurnModel]:
     q = db.query(OpicTurnModel).filter(OpicTurnModel.session_id == session_id)
 
-    # ✅ created_at 있으면 그걸로, 없으면 id로 정렬(안전장치)
     if hasattr(OpicTurnModel, "created_at"):
         q = q.order_by(OpicTurnModel.created_at.asc())
     else:
@@ -95,7 +91,6 @@ def _count_user_answers(db: Session, session_id: int) -> int:
 
 
 def _get_profile_dict(db: Session, profile_id: int) -> Dict[str, Any]:
-    # ✅ profile_id 변수명은 유지해도 되지만, 실제 값은 user_id임
     prof = db.query(UserProfile).filter(UserProfile.user_id == profile_id).first()
     if not prof:
         raise ValueError("profile not found")
@@ -114,18 +109,19 @@ def _get_profile_dict(db: Session, profile_id: int) -> Dict[str, Any]:
     }
 
 
+# ----------------------------
+# Topic utilities
+# ----------------------------
 TOPIC_ROOT = os.getenv("OPIC_TOPIC_DIR", "topic")
+
 
 def _grade_dir(goal_grade: str) -> str:
     g = (goal_grade or "").upper().strip()
     return "IM" if g == "IM" else "IH_AL"
 
+
 @lru_cache(maxsize=64)
 def _list_bank_topics(goal_grade: str, mode: str) -> list[str]:
-    """
-    topic/{IM|IH_AL}/{mode} 폴더 안의 .txt 파일명을 스캔해서
-    ["home", "cafe", ...] 형태로 반환
-    """
     gdir = _grade_dir(goal_grade)
     m = (mode or "survey").lower().strip()
     folder = os.path.join(TOPIC_ROOT, gdir, m)
@@ -133,151 +129,145 @@ def _list_bank_topics(goal_grade: str, mode: str) -> list[str]:
     if not os.path.isdir(folder):
         return []
 
-    topics = []
-    for fname in os.listdir(folder):
-        if fname.lower().endswith(".txt"):
-            stem = os.path.splitext(fname)[0].strip()
-            if stem:
-                topics.append(stem)
+    return [
+        os.path.splitext(f)[0]
+        for f in os.listdir(folder)
+        if f.endswith(".txt")
+    ]
 
-    topics.sort()
-    return topics
-
-def _topic_exists_in_bank(goal_grade: str, mode: str, topic_name: str) -> bool:
-    topic = (topic_name or "").strip().lower()
-    if not topic:
-        return False
-    return topic in set(_list_bank_topics(goal_grade, mode))
 
 def _tokenize(s: str) -> set[str]:
     s = (s or "").lower()
     s = re.sub(r"[^a-z0-9_ ]+", " ", s)
-    return {t for t in s.split() if t}
+    return set(s.split())
 
-def normalize_topic_to_bank(goal_grade: str, mode: str, raw_topic: str) -> tuple[str, bool]:
-    """
-    raw_topic을 해당 mode 폴더의 txt 파일명 중 하나로 매칭.
-    return: (normalized_topic, matched_bool)
-    """
-    raw = (raw_topic or "").strip().lower()
-    if not raw:
-        return ("home", False)
 
-    bank_topics = _list_bank_topics(goal_grade, mode)
-    if not bank_topics:
-        return (raw, False)
+def normalize_topic_to_bank(goal_grade: str, mode: str, raw: str):
+    raw = (raw or "").lower().strip()
+    bank = _list_bank_topics(goal_grade, mode)
 
-    # 1) 완전 일치
-    if raw in bank_topics:
-        return (raw, True)
+    if raw in bank:
+        return raw, True
 
     raw_tokens = _tokenize(raw)
 
-    best = None
-    best_score = 0
-
-    for t in bank_topics:
+    best, score = None, 0
+    for t in bank:
         t_tokens = _tokenize(t)
-
-        score = 0
+        s = len(raw_tokens & t_tokens)
         if raw in t or t in raw:
-            score += 3
-        score += len(raw_tokens & t_tokens)
+            s += 3
+        if s > score:
+            best, score = t, s
 
-        if score > best_score:
-            best_score = score
-            best = t
+    return (best, True) if best else (raw, False)
 
-    if best is not None and best_score >= 1:
-        return (best, True)
-
-    return (raw, False)
-
-def pick_survey_topic_from_profile_dict(profile: dict, goal_grade: str, min_n=2, max_n=3) -> str:
-    candidates = []
-
-    job = (profile.get("job") or "").strip().lower()
-    if job:
-        candidates.append(job)
-
-    hobbies = profile.get("hobbies") or {}
-
-    # hobbies가 dict(survey 전체)인 경우
-    if isinstance(hobbies, dict):
-        for key in ["leisure", "hobby", "exercise", "travel"]:
-            values = hobbies.get(key) or []
-            for v in values:
-                s = str(v).strip().lower()
-                if s:
-                    candidates.append(s)
-
-    # 혹시 예전 데이터가 list인 경우도 호환
-    elif isinstance(hobbies, list):
-        for h in hobbies:
-            s = str(h).strip().lower()
-            if s:
-                candidates.append(s)
-
-    candidates = list({c for c in candidates if c})
-    if not candidates:
-        return "home"
-
-    n = random.randint(min_n, min(max_n, len(candidates)))
-    subset = random.sample(candidates, n)
-    chosen = random.choice(subset)
-
-    normalized, matched = normalize_topic_to_bank(goal_grade, "survey", chosen)
-
-    if matched and _topic_exists_in_bank(goal_grade, "survey", normalized):
-        return normalized
-
-    return pick_sudden_topic_from_bank(goal_grade)
-
-
-def pick_sudden_topic_from_bank(goal_grade: str) -> str:
-    """
-    sudden: profile에서 가져오지 않고, sudden 폴더의 txt 중 랜덤으로 선택
-    """
-    topics = _list_bank_topics(goal_grade, "sudden")
-    return random.choice(topics) if topics else "home"
-
-def decide_topic_name(profile: dict, goal_grade: str, mode: str) -> str:
-    m = (mode or "survey").lower().strip()
-    gdir = _grade_dir(goal_grade)
-
-    if m == "survey":
-        return pick_survey_topic_from_profile_dict(profile, goal_grade)
-
-    if m == "sudden":
-        topics = _list_bank_topics(goal_grade, "sudden")
-        return random.choice(topics) if topics else "home"
-
-    if m == "advance":
-        # IM에는 advance 폴더가 없으니 survey 정책(=profile 기반)으로 처리
-        if gdir == "IM":
-            return pick_survey_topic_from_profile_dict(profile, goal_grade)
-
-        topics = _list_bank_topics(goal_grade, "advance")
-        return random.choice(topics) if topics else "home"
-
-    return pick_survey_topic_from_profile_dict(profile, goal_grade)
 
 # ----------------------------
-# Session UX helpers
+# topic 추출 (순서 유지 핵심 🔥)
+# ----------------------------
+def extract_valid_topics(profile: dict, goal_grade: str, mode: str) -> list[str]:
+    hobbies = profile.get("hobbies")
+    raw = []
+
+    if isinstance(hobbies, list):
+        raw.extend(hobbies)
+
+    elif isinstance(hobbies, dict):
+        for v in hobbies.values():
+            if isinstance(v, list):
+                raw.extend(v)
+            elif isinstance(v, str):
+                raw.append(v)
+
+    raw = [str(x).lower().strip() for x in raw if x]
+
+    valid = []
+    for r in raw:
+        t, matched = normalize_topic_to_bank(goal_grade, mode, r)
+        if matched:
+            valid.append(t)
+
+    # 🔥 순서 유지 + 중복 제거
+    return list(dict.fromkeys(valid))
+
+
+# ----------------------------
+# 🔥 핵심: topic 흐름 제어
+# ----------------------------
+def get_next_topic_and_mode(session_id: int, topics: list[str], goal_grade: str):
+
+    state = SESSION_STATE.get(session_id)
+
+    # 최초 1회만 topics 고정
+    if not state:
+        if not topics:
+            topics = ["home"]
+
+        state = {
+            "topics": topics,
+            "topic_index": 0,
+            "question_count": 0,
+            "mode": "survey"
+        }
+
+    topics = state["topics"]
+
+    # 3문제마다 topic 변경
+    if state["question_count"] >= 3:
+        state["topic_index"] = (state["topic_index"] + 1) % len(topics)
+        state["question_count"] = 0
+
+        # 🔥 돌발 확률
+        if random.random() < 0.3:
+            state["mode"] = "sudden"
+        else:
+            state["mode"] = "survey"
+
+    state["question_count"] += 1
+
+    # topic 선택
+    if state["mode"] == "sudden":
+        sudden_topics = _list_bank_topics(goal_grade, "sudden")
+        topic = random.choice(sudden_topics) if sudden_topics else "home"
+    else:
+        topic = topics[state["topic_index"]]
+
+    SESSION_STATE[session_id] = state
+
+    return topic, state["mode"]
+
+
+# ----------------------------
+# session summary
+# ----------------------------
+def get_session_summary(db: Session, session_id: int) -> Dict[str, Any]:
+    sess = db.query(OpicSession).filter(OpicSession.session_id == session_id).first()
+
+    return {
+        "sessionId": session_id,
+        "status": sess.status,
+        "answered": _count_user_answers(db, session_id),
+        "targetCount": sess.target_count,
+        "goalGrade": sess.goal_grade,
+        "profileId": sess.user_id,
+    }
+
+
+# ----------------------------
+# Session UX
 # ----------------------------
 def seed_first_question(db: Session, session_id: int) -> Dict[str, Any]:
-
     sess = db.query(OpicSession).filter(OpicSession.session_id == session_id).first()
-    if not sess:
-        raise ValueError("session not found")
-
     profile = _get_profile_dict(db, sess.user_id)
 
-    # ✅ 추가
-    mode = getattr(sess, "mode", "survey")
-    topic_name = decide_topic_name(profile, sess.goal_grade, mode)
+    topics = extract_valid_topics(profile, sess.goal_grade, "survey")
 
-    first_q = generate_next_question(
+    topic_name, mode = get_next_topic_and_mode(
+        session_id, topics, sess.goal_grade
+    )
+
+    q = generate_next_question(
         profile=profile,
         goal_grade=sess.goal_grade,
         history=[],
@@ -287,63 +277,26 @@ def seed_first_question(db: Session, session_id: int) -> Dict[str, Any]:
         mode=mode,
     )
 
-    save_turn(db, session_id, "EXAMINER", first_q)
+    save_turn(db, session_id, "EXAMINER", q)
 
     return {
         "sessionId": session_id,
-        "questionText": first_q,
+        "questionText": q,
         "turnIndex": 0,
     }
 
 
-def get_session_summary(db: Session, session_id: int) -> Dict[str, Any]:
-    sess = db.query(OpicSession).filter(OpicSession.session_id == session_id).first()
-    if not sess:
-        raise ValueError("session not found")
-
-    answered = _count_user_answers(db, session_id)
-    target = getattr(sess, "target_count", None) or 12
-    status = getattr(sess, "status", "RUNNING")
-
-    return {
-        "sessionId": session_id,
-        "status": status,
-        "answered": answered,
-        "targetCount": target,
-        "goalGrade": sess.goal_grade,
-        # ❌ OpicSession에는 profile_id가 없음
-        # "profileId": sess.profile_id,
-        # ✅ 유저별 프로필 1개 구조에서는 profileId == user_id 로 내려도 됨(프론트 호환용)
-        "profileId": sess.user_id,
-    }
-
-
-# ----------------------------
-# Role A: Examiner (질문 생성)
-# ----------------------------
 def run_examiner_turn(db: Session, session_id: int, user_input: str) -> Dict[str, Any]:
-
     sess = db.query(OpicSession).filter(OpicSession.session_id == session_id).first()
-    if not sess:
-        raise ValueError("session not found")
-
     profile = _get_profile_dict(db, sess.user_id)
 
-    # ✅ 추가 (핵심)
-    mode = getattr(sess, "mode", "survey")
-    topic_name = decide_topic_name(profile, sess.goal_grade, mode)
+    topics = extract_valid_topics(profile, sess.goal_grade, "survey")
+
+    topic_name, mode = get_next_topic_and_mode(
+        session_id, topics, sess.goal_grade
+    )
 
     turns = get_turns(db, session_id)
-
-    last_examiner_q = None
-    for t in reversed(turns):
-        if t.role == "EXAMINER":
-            last_examiner_q = t.text
-            break
-
-    if not last_examiner_q:
-        seeded = seed_first_question(db, session_id)
-        turns = get_turns(db, session_id)
 
     save_turn(db, session_id, "USER", user_input)
 
@@ -352,8 +305,7 @@ def run_examiner_turn(db: Session, session_id: int, user_input: str) -> Dict[str
         + [{"role": "USER", "text": user_input}]
     )
 
-    # ✅ topic_name, mode 전달
-    next_q = generate_next_question(
+    q = generate_next_question(
         profile=profile,
         goal_grade=sess.goal_grade,
         history=history,
@@ -363,53 +315,36 @@ def run_examiner_turn(db: Session, session_id: int, user_input: str) -> Dict[str
         mode=mode,
     )
 
-    save_turn(db, session_id, "EXAMINER", next_q)
-
-    turn_index = _count_user_answers(db, session_id)
+    save_turn(db, session_id, "EXAMINER", q)
 
     return {
         "sessionId": session_id,
-        "questionText": next_q,
-        "turnIndex": turn_index,
+        "questionText": q,
+        "turnIndex": _count_user_answers(db, session_id),
     }
 
 
 # ----------------------------
-# Role B: Rater (JSON 평가)
+# Rater
 # ----------------------------
 def end_and_rate_session(db: Session, session_id: int, force: bool = False) -> dict:
     sess = db.query(OpicSession).filter(OpicSession.session_id == session_id).first()
-    if not sess:
-        raise ValueError("session not found")
-
-    # ✅ 멱등 처리
-    if sess.status == "ENDED" and sess.report_json:
-        return json.loads(sess.report_json)
 
     turns = get_turns(db, session_id)
-    answered = _count_user_answers(db, session_id)
-    target = sess.target_count or 12
-
-    if not force and answered < min(3, target):
-        raise ValueError(f"not enough answers to rate: {answered}")
-
-    # ❌ OpicSession에는 profile_id가 없음
-    # profile = _get_profile_dict(db, sess.profile_id)
-    # ✅ OpicSession.user_id로 프로필 조회
     profile = _get_profile_dict(db, sess.user_id)
 
     transcript = [{"role": t.role, "text": t.text} for t in turns]
 
-    report_json = rate_session(
+    report = rate_session(
         profile=profile,
         goal_grade=sess.goal_grade,
-        target_count=target,
+        target_count=sess.target_count,
         transcript=transcript,
     )
 
     sess.status = "ENDED"
+    sess.report_json = json.dumps(report, ensure_ascii=False)
     sess.ended_at = datetime.utcnow()
-    sess.report_json = json.dumps(report_json, ensure_ascii=False)
 
     db.commit()
-    return report_json
+    return report

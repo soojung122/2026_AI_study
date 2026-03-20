@@ -188,7 +188,7 @@ def examiner_generate_question(
 
     mode_block = first_block if is_first else follow_block
 
-    # 한국어 지시 + 영어 출력 규칙(지우님 기존 스타일 참고)
+    # 한국어 지시 + 영어 출력 규칙
     prompt = f"""
 당신은 실제 OPIc 영어 말하기 시험의 시험관입니다.
 
