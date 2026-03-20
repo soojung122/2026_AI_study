@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { startSession, turnSession, endSession, getMyOpicProfile } from "./api";
-
+import { startSession, turnSession, endSession, getMyOpicProfile, saveMyOpicProfile  } from "./api";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -87,31 +86,49 @@ function Sidebar({ collapsed, query, setQuery, sessions, activeId, setActiveId, 
 
       <div className="sidebar-list">
         {sessions.map((s) => (
-          <button
+          <div
             key={s.id}
             className={`session-item ${s.id === activeId ? "active" : ""}`}
             onClick={() => setActiveId(s.id)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                setActiveId(s.id);
+              }
+            }}
           >
             <div className="session-title">{truncate(s.title)}</div>
             <div className="session-sub">
               {s.targetGrade} · {new Date(s.updatedAt).toLocaleDateString()}
             </div>
             <div className="session-actions" onClick={(e) => e.stopPropagation()}>
-              <button className="icon-btn small" onClick={() => onRenameSession(s.id)} title="rename">
+              <button
+                type="button"
+                className="icon-btn small"
+                onClick={() => onRenameSession(s.id)}
+                title="rename"
+              >
                 ✎
               </button>
-              <button className="icon-btn small" onClick={() => onDeleteSession(s.id)} title="delete">
+              <button
+                type="button"
+                className="icon-btn small"
+                onClick={() => onDeleteSession(s.id)}
+                title="delete"
+              >
                 🗑
               </button>
             </div>
-          </button>
+          </div>
         ))}
       </div>
     </aside>
   );
 }
 
-function SettingsPanel({ session, onChange }) {
+function SettingsPanel({ session, onChange, onSave, saving }) {
   const profile = session.profile;
 
   const survey = profile.survey ?? {
@@ -374,6 +391,16 @@ function SettingsPanel({ session, onChange }) {
           </div>
         ))}
       </div>
+      <div className="survey-save">
+        <button
+          type="button"
+          className="btn primary"
+          onClick={onSave}
+          disabled={saving}
+        >
+          {saving ? "저장 중..." : "저장하기"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -473,6 +500,31 @@ export default function MainScreen() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [activeTab, setActiveTab] = useState("chat");
+
+  const [profileSaving, setProfileSaving] = useState(false);
+
+  const handleSaveProfile = async () => {
+    if (!active) return;
+
+    setProfileSaving(true);
+
+    try {
+      const payload = toApiProfile(active.profile);
+
+      const res = await saveMyOpicProfile(payload);
+
+      updateActiveSession((s) => ({
+        ...s,
+        serverProfileId: res.profileId,
+      }));
+
+      alert("프로필 저장 완료");
+    } catch (e) {
+      alert("저장 실패: " + (e.message || ""));
+    } finally {
+      setProfileSaving(false);
+    }
+  };
 
   /** ✅ STT state */
   const [isRecording, setIsRecording] = useState(false);
@@ -670,7 +722,6 @@ export default function MainScreen() {
       const started = await startSession({
         goalGrade: active.targetGrade,
         targetCount: 12,
-        profile: toApiProfile(active.profile),
       });
 
       serverSessionId = started.sessionId;
@@ -874,7 +925,12 @@ export default function MainScreen() {
             </>
           ) : (
             <section className="profile-panel">
-              {active ? <SettingsPanel session={active} onChange={(updater) => updateActiveSession(updater)} /> : null}
+              {active ? <SettingsPanel
+                          session={active}
+                          onChange={(updater) => updateActiveSession(updater)}
+                          onSave={handleSaveProfile}
+                          saving={profileSaving}
+                        /> : null}
             </section>
           )}
         </div>

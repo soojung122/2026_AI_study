@@ -62,6 +62,7 @@ export async function getMyOpicProfile() {
   });
 }
 
+
 /**
  * 턴 진행
  */
@@ -110,4 +111,29 @@ export function registerApi({ email, password, name }) {
 // 260217 서은 - 현재 사용자 조회
 export function meApi() {
   return apiFetch("/api/auth/me");
+}
+
+/* 프로필 저장하기 */
+export async function saveMyOpicProfile(profile) {
+  const token = getToken();
+
+  if (!token) {
+    throw new Error("로그인이 필요합니다.");
+  }
+
+  const res = await fetch("http://localhost:8000/api/opic/profile", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(profile),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "프로필 저장 실패");
+  }
+
+  return res.json();
 }

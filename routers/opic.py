@@ -44,8 +44,6 @@ class ProfileIn(BaseModel):
 
 
 class SessionStartRequest(BaseModel):
-    profileId: Optional[int] = None
-    profile: Optional[ProfileIn] = None
     goalGrade: str = Field(..., examples=["IH"])
     targetCount: int = Field(12, ge=1, le=20)
 
@@ -83,30 +81,16 @@ class ReportResponse(BaseModel):
 def start_session(
     req: SessionStartRequest,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),  # ✅ 260222 서은 - 현재 로그인 사용자 주입
+    user: User = Depends(get_current_user),
 ):
-    """
-    세션 시작:
-    - profileId가 있으면 재사용
-    - 없으면 profile(name/job/...)로 DB에서 get-or-create
-    - 세션 생성 후 첫 질문 seed 해서 반환
-    """
-    profile_id = req.profileId
-    profile_dict = req.profile.model_dump() if req.profile else None
+    profile_id = user.id
 
-    if not profile_id:
-        if not profile_dict:
-            raise HTTPException(status_code=400, detail="profileId 또는 profile이 필요합니다.")
-        # job 필수 방어 (DB nullable=False면 꼭 필요)
-        if not profile_dict.get("job"):
-            raise HTTPException(status_code=400, detail="job은 필수입니다.")
+    try:
+        _get_profile_dict(db, profile_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="프로필을 먼저 저장해주세요.")
 
-        # ✅ 260222 서은 - user_id를 반드시 함께 저장
-        profile_id = create_profile(db, profile_dict, user_id=user.id)  # int 반환
-
-    session_id = create_session(db, profile_id, req.goalGrade, target_count=req.targetCount)  # int 반환
-
-    # ✅ 세션 시작 직후 첫 질문 생성/저장
+    session_id = create_session(db, profile_id, req.goalGrade, target_count=req.targetCount)
     first = seed_first_question(db, session_id)
 
     return SessionStartResponse(
@@ -206,17 +190,11 @@ def opic_turn_legacy(
     if not req.userInput or not req.userInput.strip():
         raise HTTPException(status_code=400, detail="userInput은 비어 있을 수 없습니다.")
 
-    profile_id = req.profileId
-    profile_dict = req.profile.model_dump() if req.profile else None
-
-    if not profile_id:
-        if not profile_dict:
-            raise HTTPException(status_code=400, detail="profileId 또는 profile이 필요합니다.")
-        if not profile_dict.get("job"):
-            raise HTTPException(status_code=400, detail="job은 필수입니다.")
-
-        # ✅ 260222 서은 - user_id를 반드시 함께 저장
-        profile_id = create_profile(db, profile_dict, user_id=user.id)
+    profile_id = user.id
+    try:
+        _get_profile_dict(db, profile_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="프로필을 먼저 저장해주세요.")
 
     session_id = req.sessionId
     if not session_id:
@@ -233,43 +211,50 @@ def opic_turn_legacy(
         turnIndex=result["turnIndex"],
     )
 
+# 프로필 저장하기
+@router.post("/profile")
+def save_my_opic_profile(
+    req: ProfileIn,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    try:
+        profile_id = create_profile(db, req.model_dump(), user_id=user.id)
+        saved_profile = _get_profile_dict(db, profile_id)
+        return {
+            "profileId": profile_id,
+            "profile": saved_profile,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Profile save failed: {str(e)}")
 
 # ✅ prefix가 이미 /api/opic 이므로, /start는 이렇게 등록해야 함
 @router.post("/start")
 def start_opic(
     payload: dict,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),  # ✅ 260222 서은 - 현재 로그인 사용자 주입
+    user: User = Depends(get_current_user),
 ):
-    """
-    프론트에서 '저장/시작 버튼' 없이도 한 번에:
-    - 프로필 get-or-create
-    - 세션 생성
-    - 첫 질문 seed
-    """
     try:
-        profile = payload["profile"]
         goal = payload["goalGrade"]
         target = payload.get("targetCount", 12)
     except Exception:
         raise HTTPException(status_code=400, detail="payload 형식이 올바르지 않습니다.")
 
-    if not profile.get("name") or not profile.get("job"):
-        raise HTTPException(status_code=400, detail="profile.name, profile.job은 필수입니다.")
+    try:
+        saved_profile = _get_profile_dict(db, user.id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="프로필을 먼저 저장해주세요.")
 
-    # ✅ 260222 서은 - user_id를 반드시 함께 저장
-    profile_id = create_profile(db, profile, user_id=user.id)
     session_id = create_session(db, user.id, goal, target_count=target)
     first = seed_first_question(db, session_id)
 
-    # ✅ DB에 저장된 실제 profile 다시 조회
-    saved_profile = _get_profile_dict(db, profile_id)
     return {
-        "profileId": profile_id,
+        "profileId": user.id,
         "sessionId": session_id,
         "firstQuestion": first["questionText"],
         "turnIndex": first["turnIndex"],
-        "profile": saved_profile,   # ✅ 추가
+        "profile": saved_profile,
     }
 
 @router.get("/profile")
