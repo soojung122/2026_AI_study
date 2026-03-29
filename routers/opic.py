@@ -175,3 +175,14 @@ def start_opic(
         "turnIndex": 0,
         "profile": saved_profile,
     }
+
+@router.get("/profile")
+def get_profile(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    try:
+        profile = _get_profile_dict(db, user.id)
+        return profile
+    except Exception:
+        raise HTTPException(status_code=404, detail="프로필이 없습니다.")
