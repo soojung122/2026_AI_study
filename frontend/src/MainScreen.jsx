@@ -525,7 +525,14 @@ export default function MainScreen() {
 
   const updateActiveSession = (updater) => {
     setSessions((prev) =>
-      prev.map((s) => (s.id === activeId ? (typeof updater === "function" ? updater(s) : updater) : s))
+      prev.map((s) => {
+        if (s.id === activeId) {
+          // 함수면 실행하고, 객체면 그대로 사용하여 기존 데이터(...s)와 합칩니다.
+          const nextData = typeof updater === "function" ? updater(s) : updater;
+          return { ...s, ...nextData, updatedAt: Date.now() };
+        }
+        return s;
+      })
     );
   };
 
@@ -576,19 +583,28 @@ export default function MainScreen() {
   };
 
   const appendTurn = (role, content, options = {}) => {
-    updateActiveSession((s) => ({
-      ...s,
-      updatedAt: Date.now(),
-      turns: [...(s.turns ?? []), { id: uid(), role, content, ts: Date.now() }],
-    }));
+    const newTurn = { id: uid(), role, content, ts: Date.now() };
+    
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === activeId
+          ? { ...s, updatedAt: Date.now(), turns: [...(s.turns || []), newTurn] }
+          : s
+      )
+    );
 
-    if (options.speak && role === "interviewer") {
+    if (options.speak && (role === "interviewer" || role === "assistant")) {
       speakText(content, { lang: "en-US", rate: 1.0, pitch: 1.0 });
     }
 
     setTimeout(() => {
-      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }, 0);
+      if (scrollRef.current) {
+        scrollRef.current.scrollTo({
+          top: scrollRef.current.scrollHeight,
+          behavior: "smooth",
+        });
+      }
+    }, 100);
   };
 
   const startSTT = () => {
@@ -667,6 +683,59 @@ export default function MainScreen() {
   };
 
   const runTurn = async () => {
+<<<<<<< HEAD
+    if (!active || loading) return;
+    const userText = input.trim();
+    
+    setErr("");
+    setLoading(true);
+
+    try {
+      let currentSessionId = active.serverSessionId;
+
+      // [Case 1] 세션이 아직 없을 때 (연습 시작)
+      if (!currentSessionId) {
+        // 1. Eva의 첫 질문을 화면에 표시
+        const firstQuestion = "Could you tell me a little about yourself?";
+        appendTurn("interviewer", firstQuestion, { speak: true });
+
+        // 2. 서버 세션 생성
+        const started = await startSession({
+          goalGrade: active.targetGrade,
+          targetCount: 12,
+          profile: toApiProfile(active.profile),
+        });
+
+        // 3. 서버에서 받은 ID들을 세션 상태에 저장 (화면 갱신 발생)
+        updateActiveSession({
+          serverSessionId: started.sessionId,
+          serverProfileId: started.profileId,
+        });
+
+        setLoading(false);
+        return; // 첫 질문 후 사용자 답변을 기다리기 위해 멈춤
+      }
+
+      // [Case 2] 진행 중인데 입력값이 없을 때
+      if (!userText) {
+        setErr("답변을 입력해주세요.");
+        setLoading(false);
+        return;
+      }
+
+      // 4. 내 답변 전송 로직
+      appendTurn("user", userText);
+      setInput("");
+      if (isRecording) stopSTT();
+
+      // 5. 서버에 답변 보내고 다음 질문 받기
+      const data = await turnSession(currentSessionId, userText);
+      appendTurn("interviewer", data.questionText, { speak: true });
+
+    } catch (e) {
+      console.error("runTurn 에러:", e);
+      setErr(e?.message ?? "서버와 통신 중 오류가 발생했습니다.");
+
     if (!active) return;
 
     const userText = input.trim();
@@ -715,6 +784,7 @@ export default function MainScreen() {
       setInput("");
     } catch (e) {
       setErr(e?.message ?? "Unknown error");
+>>>>>>> 57d237a010241665444ba3464e58646a90cc497f
     } finally {
       setLoading(false);
     }
