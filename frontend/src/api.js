@@ -1,5 +1,7 @@
 // src/api.js
 
+const API_BASE = "http://localhost:8000";
+
 // 260221 서은 - 토큰 가져오기
 function getToken() {
   return localStorage.getItem("accessToken");
@@ -16,19 +18,15 @@ async function apiFetch(url, options = {}) {
     ...(options.headers || {}),
   };
 
-  // ✅ auth 옵션이 false면 토큰을 안 붙임 (로그인/회원가입 등에 사용)
   const useAuth = options.auth !== false;
 
-  // 토큰 자동 포함
   if (useAuth && token) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(url, {
+  const res = await fetch(`${API_BASE}${url}`, {
     ...options,
     headers,
-
-    // body가 객체면 JSON 변환
     body:
       options.body && typeof options.body === "object"
         ? JSON.stringify(options.body)
@@ -40,7 +38,12 @@ async function apiFetch(url, options = {}) {
     throw new Error(`API ${res.status}: ${text}`);
   }
 
-  return res.json();
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    return res.json();
+  }
+
+  return null;
 }
 
 /**
@@ -61,7 +64,6 @@ export async function getMyOpicProfile() {
     method: "GET",
   });
 }
-
 
 /**
  * 턴 진행
@@ -94,7 +96,7 @@ export function endSession(sessionId, payload = {}) {
 export function loginApi({ email, password }) {
   return apiFetch("/api/auth/login", {
     method: "POST",
-    auth: false, // ✅ 로그인 요청에는 토큰 불필요
+    auth: false,
     body: { email, password },
   });
 }
@@ -103,7 +105,7 @@ export function loginApi({ email, password }) {
 export function registerApi({ email, password, name }) {
   return apiFetch("/api/auth/register", {
     method: "POST",
-    auth: false, // ✅ 회원가입 요청에는 토큰 불필요
+    auth: false,
     body: { email, password, name },
   });
 }
@@ -114,26 +116,9 @@ export function meApi() {
 }
 
 /* 프로필 저장하기 */
-export async function saveMyOpicProfile(profile) {
-  const token = getToken();
-
-  if (!token) {
-    throw new Error("로그인이 필요합니다.");
-  }
-
-  const res = await fetch("http://localhost:8000/api/opic/profile", {
+export function saveMyOpicProfile(profile) {
+  return apiFetch("/api/opic/profile", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(profile),
+    body: profile,
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || "프로필 저장 실패");
-  }
-
-  return res.json();
 }

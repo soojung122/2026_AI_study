@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { startSession, turnSession, endSession, getMyOpicProfile } from "./api";
+import { startSession, turnSession, endSession, getMyOpicProfile, saveMyOpicProfile } from "./api";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -798,43 +798,47 @@ export default function MainScreen() {
   }, []);
 
   useEffect(() => {
-    if (activeTab !== "chat" || !active) return;
+  if (activeTab !== "profile" || !active) return;
 
-    const token = localStorage.getItem("accessToken");
-    if (!token) return;
+  const token = localStorage.getItem("accessToken");
+  if (!token) return;
 
-    let cancelled = false;
+  let cancelled = false;
 
-    async function loadProfileFromDB() {
-      try {
-        const res = await getMyOpicProfile();
+  async function loadProfileFromDB() {
+    try {
+      const res = await getMyOpicProfile();
 
-        if (cancelled) return;
-        if (!res?.profile) return;
+      if (cancelled) return;
+      if (!res) return;
 
-        updateActiveSession((s) => ({
-          ...s,
-          serverProfileId: res.profileId ?? s.serverProfileId,
-          profile: {
-            ...s.profile,
-            name: res.profile.name ?? "",
-            job: res.profile.job ?? "",
-            city: res.profile.city ?? "",
-            survey: res.profile.hobbies ?? s.profile.survey,
-            speakingStyle: res.profile.speaking_style ?? "natural",
-          },
-        }));
-      } catch (e) {
-        console.error("profile load failed:", e);
-      }
+      updateActiveSession((s) => ({
+        ...s,
+        profile: {
+          ...s.profile,
+          name: res.name ?? "",
+          job: res.job ?? "",
+          city: res.city ?? "",
+          survey: res.hobbies ?? s.profile.survey,
+          speakingStyle: res.speaking_style ?? "natural",
+        },
+      }));
+    } catch (e) {
+      console.error("profile load failed:", e);
+
+      const msg = String(e?.message || "");
+      if (msg.includes("404")) return;
+
+      setErr(e?.message ?? "프로필 조회 중 오류가 발생했습니다.");
     }
+  }
 
-    loadProfileFromDB();
+  loadProfileFromDB();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, activeId]);
+  return () => {
+    cancelled = true;
+  };
+}, [activeTab, activeId]);
 
   return (
     <div className="layout">
