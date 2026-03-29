@@ -683,7 +683,6 @@ export default function MainScreen() {
   };
 
   const runTurn = async () => {
-<<<<<<< HEAD
     if (!active || loading) return;
     const userText = input.trim();
     
@@ -784,7 +783,6 @@ export default function MainScreen() {
       setInput("");
     } catch (e) {
       setErr(e?.message ?? "Unknown error");
->>>>>>> 57d237a010241665444ba3464e58646a90cc497f
     } finally {
       setLoading(false);
     }
@@ -969,4 +967,5 @@ export default function MainScreen() {
       </main>
     </div>
   );
+}
 }
