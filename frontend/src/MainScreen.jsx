@@ -683,6 +683,7 @@ export default function MainScreen() {
   };
 
   const runTurn = async () => {
+<<<<<<< HEAD
     if (!active || loading) return;
     const userText = input.trim();
     
@@ -734,6 +735,56 @@ export default function MainScreen() {
     } catch (e) {
       console.error("runTurn 에러:", e);
       setErr(e?.message ?? "서버와 통신 중 오류가 발생했습니다.");
+
+    if (!active) return;
+
+    const userText = input.trim();
+    if (!userText) return;
+
+    setErr("");
+    setLoading(true);
+
+    appendTurn("user", userText);
+
+    if (isRecording) stopSTT();
+
+    try {
+      let serverSessionId = active.serverSessionId;
+
+      if (!serverSessionId) {
+        const started = await startSession({
+          goalGrade: active.targetGrade,
+          targetCount: 12,
+          profile: toApiProfile(active.profile),
+        });
+
+        serverSessionId = started.sessionId;
+
+        updateActiveSession((s) => ({
+          ...s,
+          serverSessionId: started.sessionId,
+          serverProfileId: started.profileId,
+          updatedAt: Date.now(),
+          profile: started.profile
+            ? {
+                ...s.profile,
+                name: started.profile.name ?? "",
+                job: started.profile.job ?? "",
+                city: started.profile.city ?? "",
+                survey: started.profile.hobbies ?? s.profile.survey,
+                speakingStyle: started.profile.speaking_style ?? "natural",
+              }
+            : s.profile,
+        }));
+      }
+
+      const data = await turnSession(serverSessionId, userText);
+      appendTurn("interviewer", data.questionText, { speak: true });
+
+      setInput("");
+    } catch (e) {
+      setErr(e?.message ?? "Unknown error");
+>>>>>>> 57d237a010241665444ba3464e58646a90cc497f
     } finally {
       setLoading(false);
     }
