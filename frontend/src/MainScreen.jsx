@@ -14,14 +14,14 @@ function truncate(s, n = 28) {
 }
 
 function toApiProfile(p) {
-  const s = p.survey || {};
+  const s = p?.survey || {};
 
   return {
-    name: "user",
+    name: p?.name || "user",
     job: s.occupation || "",
     city: s.residence || "",
     hobbies: s,
-    speaking_style: p.speakingStyle || "natural",
+    speaking_style: p?.speakingStyle || "natural",
   };
 }
 
@@ -189,7 +189,6 @@ function SettingsPanel({ session, onChange, onSave, saving }) {
   const toggleSurveyArray = (key, item) => {
     const current = survey[key] ?? [];
     const next = current.includes(item) ? current.filter((x) => x !== item) : [...current, item];
-
     setSurvey(key, next);
   };
 
@@ -210,7 +209,6 @@ function SettingsPanel({ session, onChange, onSave, saving }) {
         "캠핑하기",
         "SNS글 올리기",
         "구직 활동",
-        "해변 가기",
         "술집 / 바 가기",
         "친구들과 문자 하기",
         "당구 치기",
@@ -280,7 +278,7 @@ function SettingsPanel({ session, onChange, onSave, saving }) {
     {
       key: "travel",
       title: "여행 / 휴가",
-      items: ["국내 출장", "회외 출장", "집에서 보내는 휴가", "국내 여행", "해외 여행"],
+      items: ["국내 출장", "해외 출장", "집에서 보내는 휴가", "국내 여행", "해외 여행"],
     },
   ];
 
@@ -392,13 +390,9 @@ function SettingsPanel({ session, onChange, onSave, saving }) {
           </div>
         ))}
       </div>
+
       <div className="survey-save">
-        <button
-          type="button"
-          className="btn primary"
-          onClick={onSave}
-          disabled={saving}
-        >
+        <button type="button" className="btn primary" onClick={onSave} disabled={saving}>
           {saving ? "저장 중..." : "저장하기"}
         </button>
       </div>
@@ -412,15 +406,20 @@ function ResultPanel({ session }) {
 
   const avg = useMemo(() => {
     if (!evals.length) return null;
+
     const keys = ["fluency", "coherence", "lexical", "grammar", "pronunciation_proxy"];
     const sums = Object.fromEntries(keys.map((k) => [k, 0]));
+
     for (const e of evals) {
       for (const k of keys) sums[k] += e?.scores?.[k] ?? 0;
     }
+
     const out = {};
     for (const k of keys) out[k] = Math.round((sums[k] / evals.length) * 10) / 10;
+
     const total = keys.reduce((a, k) => a + out[k], 0) / keys.length;
     out.total = Math.round(total * 10) / 10;
+
     return out;
   }, [evals]);
 
@@ -454,42 +453,40 @@ function ResultPanel({ session }) {
   );
 }
 
-/*
-직업: 사업 / 회사
-학생 여부:
-최근 강의:
-거주 형태:
-여가 활동:
-*/
+function createEmptySession(title = "OPIc Practice") {
+  return {
+    id: uid(),
+    title,
+    targetGrade: "IH",
+    updatedAt: Date.now(),
+    serverSessionId: null,
+    serverProfileId: null,
+    profile: {
+      name: "",
+      job: "",
+      city: "",
+      survey: {
+        occupation: "",
+        isStudent: "",
+        recentCourse: "",
+        residence: "",
+        leisure: [],
+        hobby: [],
+        exercise: [],
+        travel: [],
+      },
+      speakingStyle: "natural",
+    },
+    turns: [],
+  };
+}
 
 export default function MainScreen() {
-  const [sessions, setSessions] = useState(() => [
-    {
-      id: uid(),
-      title: "OPIc Practice",
-      targetGrade: "IH",
-      updatedAt: Date.now(),
-      serverSessionId: null,
-      serverProfileId: null,
-      profile: {
-        survey: {
-          occupation: "",
-          isStudent: "",
-          recentCourse: "",
-          residence: "",
-          leisure: [],
-          hobby: [],
-          exercise: [],
-          travel: [],
-        },
-        speakingStyle: "natural",
-      },
-      turns: [],
-    },
-  ]);
-
-  const [activeId, setActiveId] = useState(sessions[0].id);
-  const active = sessions.find((s) => s.id === activeId) ?? sessions[0];
+  const [sessions, setSessions] = useState(() => [createEmptySession()]);
+  const [activeId, setActiveId] = useState(() => {
+    const initial = createEmptySession();
+    return initial.id;
+  });
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [query, setQuery] = useState("");
@@ -497,6 +494,7 @@ export default function MainScreen() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [activeTab, setActiveTab] = useState("chat");
+  const [profileSaving, setProfileSaving] = useState(false);
 
   const [isRecording, setIsRecording] = useState(false);
   const sttRef = useRef(null);
@@ -504,6 +502,16 @@ export default function MainScreen() {
   const baseInputRef = useRef("");
   const finalBufferRef = useRef("");
   const interimRef = useRef("");
+
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    if (sessions.length && !sessions.some((s) => s.id === activeId)) {
+      setActiveId(sessions[0].id);
+    }
+  }, [sessions, activeId]);
+
+  const active = sessions.find((s) => s.id === activeId) ?? sessions[0];
 
   const lastQuestionText = useMemo(() => {
     const turns = active?.turns ?? [];
@@ -521,70 +529,26 @@ export default function MainScreen() {
     return sessions.filter((s) => (s.title || "").toLowerCase().includes(q));
   }, [sessions, query]);
 
-  const scrollRef = useRef(null);
-
   const updateActiveSession = (updater) => {
     setSessions((prev) =>
       prev.map((s) => {
-        if (s.id === activeId) {
-          // 함수면 실행하고, 객체면 그대로 사용하여 기존 데이터(...s)와 합칩니다.
-          const nextData = typeof updater === "function" ? updater(s) : updater;
-          return { ...s, ...nextData, updatedAt: Date.now() };
-        }
-        return s;
+        if (s.id !== activeId) return s;
+        const nextData = typeof updater === "function" ? updater(s) : updater;
+        return { ...s, ...nextData, updatedAt: Date.now() };
       })
     );
   };
 
-  const onRenameSession = (id) => {
-    const title = prompt("새 세션 이름", sessions.find((s) => s.id === id)?.title ?? "");
-    if (!title) return;
-    setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title, updatedAt: Date.now() } : s)));
-  };
-
-  const onDeleteSession = (id) => {
-    if (!confirm("세션을 삭제할까요?")) return;
-    setSessions((prev) => prev.filter((s) => s.id !== id));
-    if (activeId === id) {
-      const remaining = sessions.filter((s) => s.id !== id);
-      if (remaining.length) setActiveId(remaining[0].id);
-    }
-  };
-
-  const onCreateSession = () => {
-    const id = uid();
-    const now = Date.now();
-    setSessions((prev) => [
-      {
-        id,
-        title: "New Session",
-        targetGrade: "IH",
-        updatedAt: now,
-        serverSessionId: null,
-        serverProfileId: null,
-        profile: {
-          survey: {
-            occupation: "",
-            isStudent: "",
-            recentCourse: "",
-            residence: "",
-            leisure: [],
-            hobby: [],
-            exercise: [],
-            travel: [],
-          },
-          speakingStyle: "natural",
-        },
-        turns: [],
-      },
-      ...prev,
-    ]);
-    setActiveId(id);
-  };
-
   const appendTurn = (role, content, options = {}) => {
-    const newTurn = { id: uid(), role, content, ts: Date.now() };
-    
+    const newTurn = {
+      id: uid(),
+      role,
+      content,
+      ts: Date.now(),
+      ...(options.kind ? { kind: options.kind } : {}),
+      ...(options.evalJson ? { evalJson: options.evalJson } : {}),
+    };
+
     setSessions((prev) =>
       prev.map((s) =>
         s.id === activeId
@@ -605,6 +569,30 @@ export default function MainScreen() {
         });
       }
     }, 100);
+  };
+
+  const onRenameSession = (id) => {
+    const title = prompt("새 세션 이름", sessions.find((s) => s.id === id)?.title ?? "");
+    if (!title) return;
+
+    setSessions((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, title, updatedAt: Date.now() } : s))
+    );
+  };
+
+  const onDeleteSession = (id) => {
+    if (!confirm("세션을 삭제할까요?")) return;
+
+    setSessions((prev) => {
+      const next = prev.filter((s) => s.id !== id);
+      return next.length ? next : [createEmptySession()];
+    });
+  };
+
+  const onCreateSession = () => {
+    const next = createEmptySession("New Session");
+    setSessions((prev) => [next, ...prev]);
+    setActiveId(next.id);
   };
 
   const startSTT = () => {
@@ -669,8 +657,8 @@ export default function MainScreen() {
 
     try {
       rec.start();
-    } catch (err) {
-      console.error(err);
+    } catch (e) {
+      console.error(e);
       setIsRecording(false);
     }
   };
@@ -678,111 +666,120 @@ export default function MainScreen() {
   const stopSTT = () => {
     try {
       sttRef.current?.stop();
-    } catch (e) {}
+    } catch (e) {
+      console.error(e);
+    }
     setIsRecording(false);
+  };
+
+  const handleSaveProfile = async () => {
+    if (!active) return;
+
+    setProfileSaving(true);
+    setErr("");
+
+    try {
+      const token = localStorage.getItem("accessToken");
+      if (!token) {
+        setErr("로그인 후 프로필을 불러오거나 저장할 수 있습니다.");
+        return;
+      }
+
+      const res = await getMyOpicProfile();
+
+      if (res?.profile) {
+        updateActiveSession((s) => ({
+          ...s,
+          serverProfileId: res.profileId ?? s.serverProfileId,
+          profile: {
+            ...s.profile,
+            name: res.profile.name ?? s.profile.name,
+            job: res.profile.job ?? s.profile.job,
+            city: res.profile.city ?? s.profile.city,
+            survey: res.profile.hobbies ?? s.profile.survey,
+            speakingStyle: res.profile.speaking_style ?? s.profile.speakingStyle ?? "natural",
+          },
+        }));
+      } else {
+        updateActiveSession((s) => ({
+          ...s,
+          profile: {
+            ...s.profile,
+          },
+        }));
+      }
+    } catch (e) {
+      console.error("profile save/load failed:", e);
+      setErr(e?.message ?? "프로필 저장 중 오류가 발생했습니다.");
+    } finally {
+      setProfileSaving(false);
+    }
   };
 
   const runTurn = async () => {
     if (!active || loading) return;
-    const userText = input.trim();
-    
+
     setErr("");
     setLoading(true);
 
     try {
       let currentSessionId = active.serverSessionId;
 
-      // [Case 1] 세션이 아직 없을 때 (연습 시작)
       if (!currentSessionId) {
-        // 1. Eva의 첫 질문을 화면에 표시
         const firstQuestion = "Could you tell me a little about yourself?";
         appendTurn("interviewer", firstQuestion, { speak: true });
 
-        // 2. 서버 세션 생성
         const started = await startSession({
           goalGrade: active.targetGrade,
           targetCount: 12,
           profile: toApiProfile(active.profile),
         });
-
-        // 3. 서버에서 받은 ID들을 세션 상태에 저장 (화면 갱신 발생)
-        updateActiveSession({
-          serverSessionId: started.sessionId,
-          serverProfileId: started.profileId,
-        });
-
-        setLoading(false);
-        return; // 첫 질문 후 사용자 답변을 기다리기 위해 멈춤
-      }
-
-      // [Case 2] 진행 중인데 입력값이 없을 때
-      if (!userText) {
-        setErr("답변을 입력해주세요.");
-        setLoading(false);
-        return;
-      }
-
-      // 4. 내 답변 전송 로직
-      appendTurn("user", userText);
-      setInput("");
-      if (isRecording) stopSTT();
-
-      // 5. 서버에 답변 보내고 다음 질문 받기
-      const data = await turnSession(currentSessionId, userText);
-      appendTurn("interviewer", data.questionText, { speak: true });
-
-    } catch (e) {
-      console.error("runTurn 에러:", e);
-      setErr(e?.message ?? "서버와 통신 중 오류가 발생했습니다.");
-
-    if (!active) return;
-
-    const userText = input.trim();
-    if (!userText) return;
-
-    setErr("");
-    setLoading(true);
-
-    appendTurn("user", userText);
-
-    if (isRecording) stopSTT();
-
-    try {
-      let serverSessionId = active.serverSessionId;
-
-      if (!serverSessionId) {
-        const started = await startSession({
-          goalGrade: active.targetGrade,
-          targetCount: 12,
-          profile: toApiProfile(active.profile),
-        });
-
-        serverSessionId = started.sessionId;
 
         updateActiveSession((s) => ({
           ...s,
           serverSessionId: started.sessionId,
           serverProfileId: started.profileId,
-          updatedAt: Date.now(),
           profile: started.profile
             ? {
                 ...s.profile,
-                name: started.profile.name ?? "",
-                job: started.profile.job ?? "",
-                city: started.profile.city ?? "",
+                name: started.profile.name ?? s.profile.name,
+                job: started.profile.job ?? s.profile.job,
+                city: started.profile.city ?? s.profile.city,
                 survey: started.profile.hobbies ?? s.profile.survey,
-                speakingStyle: started.profile.speaking_style ?? "natural",
+                speakingStyle: started.profile.speaking_style ?? s.profile.speakingStyle,
               }
             : s.profile,
         }));
+
+        return;
       }
 
-      const data = await turnSession(serverSessionId, userText);
-      appendTurn("interviewer", data.questionText, { speak: true });
+      const userText = input.trim();
+      if (!userText) {
+        setErr("답변을 입력해주세요.");
+        return;
+      }
 
+      appendTurn("user", userText);
       setInput("");
+
+      if (isRecording) stopSTT();
+
+      const data = await turnSession(currentSessionId, userText);
+
+      if (data?.questionText) {
+        appendTurn("interviewer", data.questionText, { speak: true });
+      }
+
+      if (data?.evaluation) {
+        appendTurn("assistant", "평가 결과가 저장되었습니다.", {
+          kind: "eval",
+          evalJson: data.evaluation,
+        });
+      }
     } catch (e) {
-      setErr(e?.message ?? "Unknown error");
+      console.error("runTurn error:", e);
+      setErr(e?.message ?? "서버와 통신 중 오류가 발생했습니다.");
     } finally {
       setLoading(false);
     }
@@ -803,6 +800,9 @@ export default function MainScreen() {
   useEffect(() => {
     if (activeTab !== "chat" || !active) return;
 
+    const token = localStorage.getItem("accessToken");
+    if (!token) return;
+
     let cancelled = false;
 
     async function loadProfileFromDB() {
@@ -815,7 +815,6 @@ export default function MainScreen() {
         updateActiveSession((s) => ({
           ...s,
           serverProfileId: res.profileId ?? s.serverProfileId,
-          updatedAt: Date.now(),
           profile: {
             ...s.profile,
             name: res.profile.name ?? "",
@@ -871,6 +870,10 @@ export default function MainScreen() {
           </div>
 
           <div className="topbar-actions">
+            <button type="button" className="btn" onClick={onCreateSession}>
+              + 새 세션
+            </button>
+
             <button
               type="button"
               className="btn"
@@ -891,11 +894,13 @@ export default function MainScreen() {
                 if (!active?.serverSessionId) return;
                 setErr("");
                 setLoading(true);
+
                 try {
                   const res = await endSession(active.serverSessionId, { force: false });
                   appendTurn("interviewer", "=== SESSION REPORT ===");
                   appendTurn("interviewer", JSON.stringify(res.report ?? res, null, 2));
                 } catch (e) {
+                  console.error(e);
                   setErr(e?.message ?? "Unknown error");
                 } finally {
                   setLoading(false);
@@ -955,17 +960,18 @@ export default function MainScreen() {
             </>
           ) : (
             <section className="profile-panel">
-              {active ? <SettingsPanel
-                          session={active}
-                          onChange={(updater) => updateActiveSession(updater)}
-                          onSave={handleSaveProfile}
-                          saving={profileSaving}
-                        /> : null}
+              {active ? (
+                <SettingsPanel
+                  session={active}
+                  onChange={(updater) => updateActiveSession(updater)}
+                  onSave={handleSaveProfile}
+                  saving={profileSaving}
+                />
+              ) : null}
             </section>
           )}
         </div>
       </main>
     </div>
   );
-}
 }
