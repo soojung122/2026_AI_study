@@ -267,15 +267,7 @@ def seed_first_question(db: Session, session_id: int) -> Dict[str, Any]:
         session_id, topics, sess.goal_grade
     )
 
-    q = generate_next_question(
-        profile=profile,
-        goal_grade=sess.goal_grade,
-        history=[],
-        last_user_answer=None,
-        is_first=True,
-        topic_name=topic_name,
-        mode=mode,
-    )
+    q = "Could you tell me a little about yourself?"
 
     save_turn(db, session_id, "EXAMINER", q)
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { startSession, turnSession, endSession, getMyOpicProfile, saveMyOpicProfile  } from "./api";
+import { startSession, turnSession, endSession, getMyOpicProfile } from "./api";
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -20,12 +20,11 @@ function toApiProfile(p) {
     name: "user",
     job: s.occupation || "",
     city: s.residence || "",
-    hobbies: s,   // ⭐ survey 전체를 hobbies에 넣음
+    hobbies: s,
     speaking_style: p.speakingStyle || "natural",
   };
 }
 
-/** ✅ Web Speech API TTS */
 function speakText(text, opts = {}) {
   const t = (text ?? "").trim();
   if (!t) return;
@@ -51,13 +50,13 @@ function stopSpeak() {
   window.speechSynthesis.cancel();
 }
 
-/** ✅ Web Speech API STT */
 function getSpeechRecognition() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
 
 function Bubble({ role, content, meta, onReplay, showReplay }) {
   const isUser = role === "user";
+
   return (
     <div className={`msg-row ${isUser ? "right" : "left"}`}>
       <div className={`avatar ${isUser ? "me" : "ai"}`}>{isUser ? "ME" : "AI"}</div>
@@ -67,7 +66,15 @@ function Bubble({ role, content, meta, onReplay, showReplay }) {
         <div className="bubble-footer">
           {meta ? <div className="bubble-meta">{meta}</div> : <div />}
           {showReplay ? (
-            <button type="button" className="icon-btn small" title="다시 듣기" onClick={onReplay}>
+            <button
+              type="button"
+              className="icon-btn small"
+              title="다시 듣기"
+              onClick={(e) => {
+                e.stopPropagation();
+                onReplay?.();
+              }}
+            >
               🔊
             </button>
           ) : null}
@@ -77,7 +84,16 @@ function Bubble({ role, content, meta, onReplay, showReplay }) {
   );
 }
 
-function Sidebar({ collapsed, query, setQuery, sessions, activeId, setActiveId, onRenameSession, onDeleteSession }) {
+function Sidebar({
+  collapsed,
+  query,
+  setQuery,
+  sessions,
+  activeId,
+  setActiveId,
+  onRenameSession,
+  onDeleteSession,
+}) {
   return (
     <aside className={`sidebar ${collapsed ? "collapsed" : ""}`}>
       <div className="sidebar-search">
@@ -103,19 +119,27 @@ function Sidebar({ collapsed, query, setQuery, sessions, activeId, setActiveId, 
             <div className="session-sub">
               {s.targetGrade} · {new Date(s.updatedAt).toLocaleDateString()}
             </div>
-            <div className="session-actions" onClick={(e) => e.stopPropagation()}>
+
+            <div className="session-actions">
               <button
                 type="button"
                 className="icon-btn small"
-                onClick={() => onRenameSession(s.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRenameSession(s.id);
+                }}
                 title="rename"
               >
                 ✎
               </button>
+
               <button
                 type="button"
                 className="icon-btn small"
-                onClick={() => onDeleteSession(s.id)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDeleteSession(s.id);
+                }}
                 title="delete"
               >
                 🗑
@@ -164,109 +188,101 @@ function SettingsPanel({ session, onChange, onSave, saving }) {
 
   const toggleSurveyArray = (key, item) => {
     const current = survey[key] ?? [];
-    const next = current.includes(item)
-      ? current.filter((x) => x !== item)
-      : [...current, item];
+    const next = current.includes(item) ? current.filter((x) => x !== item) : [...current, item];
 
     setSurvey(key, next);
   };
 
   const leisureGroups = [
-  {
-    key: "leisure",
-    title: "여가 활동",
-    items: [
-      "영화 보기",
-      "클럽/나이트 가기",
-      "박물관 가기",
-      "주거 개선",
-      "해변 가기",
-      "스포츠 관람",
-      "요리 관련 프로그램 시청",
-      "공연 보기",
-      "게임하기",
-      "캠핑하기",
-      "SNS글 올리기",
-      "구직 활동",
-      "해변 가기",
-      "술집 / 바 가기",
-      "친구들과 문자 하기",
-      "당구 치기",
-      "자원 봉사",
-      "차 드라이브 하기",
-      "시험 대비 과정 수강",
-      "뉴스 보거나 듣기",
-      "카페 / 커피 전문점 가기",
-      "체스",
-      "콘서트 보기",
-      "TV 시청",
-      "쇼핑",
-      "음악 감상",
-      "리얼리티 쇼 보기",
-    ],
-  },
-  {
-    key: "hobby",
-    title: "취미 / 관심사",
-    items: [
-      "아이에게 책 읽어주기",
-      "악기 연주하기",
-      "독서",
-      "사진 촬영하기",
-      "글쓰기",
-      "요리 하기",
-      "신문 읽기",
-      "음악 감상하기",
-      "애완동물 키우기",
-      "그림 그리기",
-      "혼자 노래 부르거나 합창",
-      "춤추기",
-      "주식 투자",
-      "여행 관련 잡지나 블로그 읽기",
-    ],
-  },
-  {
-    key: "exercise",
-    title: "운동",
-    items: [
-      "농구",
-      "야구/소프트볼",
-      "축구",
-      "미식축구",
-      "하키",
-      "크로켓",
-      "골프",
-      "배구",
-      "테니스",
-      "배드민턴",
-      "탁구",
-      "수영",
-      "자전거",
-      "스키/스노보드",
-      "아이스 스케이트",
-      "태권도",
-      "운동 수업 수강하기",
-      "조깅",
-      "걷기",
-      "요가",
-      "하이킹, 트레킹",
-      "낚시",
-      "헬스",
-      "운동을 전혀 하지 않음",
-    ],
-  },
-  {
-    key: "travel",
-    title: "여행 / 휴가",
-    items: [
-      "국내 출장",
-      "회외 출장",
-      "집에서 보내는 휴가",
-      "국내 여행",
-      "해외 여행",
-    ],
-  },
-];
+    {
+      key: "leisure",
+      title: "여가 활동",
+      items: [
+        "영화 보기",
+        "클럽/나이트 가기",
+        "박물관 가기",
+        "주거 개선",
+        "해변 가기",
+        "스포츠 관람",
+        "요리 관련 프로그램 시청",
+        "공연 보기",
+        "게임하기",
+        "캠핑하기",
+        "SNS글 올리기",
+        "구직 활동",
+        "해변 가기",
+        "술집 / 바 가기",
+        "친구들과 문자 하기",
+        "당구 치기",
+        "자원 봉사",
+        "차 드라이브 하기",
+        "시험 대비 과정 수강",
+        "뉴스 보거나 듣기",
+        "카페 / 커피 전문점 가기",
+        "체스",
+        "콘서트 보기",
+        "TV 시청",
+        "쇼핑",
+        "음악 감상",
+        "리얼리티 쇼 보기",
+      ],
+    },
+    {
+      key: "hobby",
+      title: "취미 / 관심사",
+      items: [
+        "아이에게 책 읽어주기",
+        "악기 연주하기",
+        "독서",
+        "사진 촬영하기",
+        "글쓰기",
+        "요리 하기",
+        "신문 읽기",
+        "음악 감상하기",
+        "애완동물 키우기",
+        "그림 그리기",
+        "혼자 노래 부르거나 합창",
+        "춤추기",
+        "주식 투자",
+        "여행 관련 잡지나 블로그 읽기",
+      ],
+    },
+    {
+      key: "exercise",
+      title: "운동",
+      items: [
+        "농구",
+        "야구/소프트볼",
+        "축구",
+        "미식축구",
+        "하키",
+        "크로켓",
+        "골프",
+        "배구",
+        "테니스",
+        "배드민턴",
+        "탁구",
+        "수영",
+        "자전거",
+        "스키/스노보드",
+        "아이스 스케이트",
+        "태권도",
+        "운동 수업 수강하기",
+        "조깅",
+        "걷기",
+        "요가",
+        "하이킹, 트레킹",
+        "낚시",
+        "헬스",
+        "운동을 전혀 하지 않음",
+      ],
+    },
+    {
+      key: "travel",
+      title: "여행 / 휴가",
+      items: ["국내 출장", "회외 출장", "집에서 보내는 휴가", "국내 여행", "해외 여행"],
+    },
+  ];
 
   return (
     <div className="panel">
@@ -275,10 +291,7 @@ function SettingsPanel({ session, onChange, onSave, saving }) {
       <div className="survey-section compact-top-row">
         <div className="compact-field">
           <label>목표 등급</label>
-          <select
-            value={session.targetGrade}
-            onChange={(e) => set("targetGrade", e.target.value)}
-          >
+          <select value={session.targetGrade} onChange={(e) => set("targetGrade", e.target.value)}>
             <option value="IM">IM</option>
             <option value="IH">IH</option>
             <option value="AL">AL</option>
@@ -310,10 +323,7 @@ function SettingsPanel({ session, onChange, onSave, saving }) {
       <div className="survey-section">
         <div className="question-title">1. 현재 귀하는 어느 분야에 종사하고 계신가요?</div>
         <div className="form-row">
-          <select
-            value={survey.occupation}
-            onChange={(e) => setSurvey("occupation", e.target.value)}
-          >
+          <select value={survey.occupation} onChange={(e) => setSurvey("occupation", e.target.value)}>
             <option value="">선택하세요</option>
             <option value="사업 / 회사">사업 / 회사</option>
             <option value="재택근무 / 재택사업">재택근무 / 재택사업</option>
@@ -326,10 +336,7 @@ function SettingsPanel({ session, onChange, onSave, saving }) {
       <div className="survey-section">
         <div className="question-title">2. 현재 당신은 학생인가요?</div>
         <div className="form-row">
-          <select
-            value={survey.isStudent}
-            onChange={(e) => setSurvey("isStudent", e.target.value)}
-          >
+          <select value={survey.isStudent} onChange={(e) => setSurvey("isStudent", e.target.value)}>
             <option value="">선택하세요</option>
             <option value="예">예</option>
             <option value="아니요">아니요</option>
@@ -340,10 +347,7 @@ function SettingsPanel({ session, onChange, onSave, saving }) {
       <div className="survey-section">
         <div className="question-title">3. 최근 어떤 강의를 수강했습니까?</div>
         <div className="form-row">
-          <select
-            value={survey.recentCourse}
-            onChange={(e) => setSurvey("recentCourse", e.target.value)}
-          >
+          <select value={survey.recentCourse} onChange={(e) => setSurvey("recentCourse", e.target.value)}>
             <option value="">선택하세요</option>
             <option value="학위 과정 수업">학위 과정 수업</option>
             <option value="전문 기술 향상을 위한 평생 학습">전문 기술 향상을 위한 평생 학습</option>
@@ -356,10 +360,7 @@ function SettingsPanel({ session, onChange, onSave, saving }) {
       <div className="survey-section">
         <div className="question-title">4. 현재 어디에 살고 계십니까?</div>
         <div className="form-row">
-          <select
-            value={survey.residence}
-            onChange={(e) => setSurvey("residence", e.target.value)}
-          >
+          <select value={survey.residence} onChange={(e) => setSurvey("residence", e.target.value)}>
             <option value="">선택하세요</option>
             <option value="개인 주택이나 아파트에 홀로 거주">개인 주택이나 아파트에 홀로 거주</option>
             <option value="친구 / 룸메이트와 함께 거주">친구 / 룸메이트와 함께 거주</option>
@@ -452,20 +453,16 @@ function ResultPanel({ session }) {
     </div>
   );
 }
+
 /*
 직업: 사업 / 회사
-
-학생 여부: 
-
-최근 강의: 
-
-거주 형태: 
-
-여가 활동: 
+학생 여부:
+최근 강의:
+거주 형태:
+여가 활동:
 */
-export default function MainScreen() {
-  
 
+export default function MainScreen() {
   const [sessions, setSessions] = useState(() => [
     {
       id: uid(),
@@ -480,10 +477,10 @@ export default function MainScreen() {
           isStudent: "",
           recentCourse: "",
           residence: "",
-          leisure: [],      // 여가 활동 (외출/활동)
-          hobby: [],        // 취미/관심사
-          exercise: [],     // 운동
-          travel: [],       // 여행
+          leisure: [],
+          hobby: [],
+          exercise: [],
+          travel: [],
         },
         speakingStyle: "natural",
       },
@@ -501,41 +498,13 @@ export default function MainScreen() {
   const [err, setErr] = useState("");
   const [activeTab, setActiveTab] = useState("chat");
 
-  const [profileSaving, setProfileSaving] = useState(false);
-
-  const handleSaveProfile = async () => {
-    if (!active) return;
-
-    setProfileSaving(true);
-
-    try {
-      const payload = toApiProfile(active.profile);
-
-      const res = await saveMyOpicProfile(payload);
-
-      updateActiveSession((s) => ({
-        ...s,
-        serverProfileId: res.profileId,
-      }));
-
-      alert("프로필 저장 완료");
-    } catch (e) {
-      alert("저장 실패: " + (e.message || ""));
-    } finally {
-      setProfileSaving(false);
-    }
-  };
-
-  /** ✅ STT state */
   const [isRecording, setIsRecording] = useState(false);
   const sttRef = useRef(null);
 
-  // ✅ STT 누적용 버퍼들
-  const baseInputRef = useRef("");   // 녹음 시작 시점 input
-  const finalBufferRef = useRef(""); // 확정(final) 누적
-  const interimRef = useRef("");     // interim(말하는 중)
+  const baseInputRef = useRef("");
+  const finalBufferRef = useRef("");
+  const interimRef = useRef("");
 
-  // ✅ 마지막 interviewer 질문 저장 (스피커 버튼 재생용)
   const lastQuestionText = useMemo(() => {
     const turns = active?.turns ?? [];
     for (let i = turns.length - 1; i >= 0; i--) {
@@ -556,7 +525,14 @@ export default function MainScreen() {
 
   const updateActiveSession = (updater) => {
     setSessions((prev) =>
-      prev.map((s) => (s.id === activeId ? (typeof updater === "function" ? updater(s) : updater) : s))
+      prev.map((s) => {
+        if (s.id === activeId) {
+          // 함수면 실행하고, 객체면 그대로 사용하여 기존 데이터(...s)와 합칩니다.
+          const nextData = typeof updater === "function" ? updater(s) : updater;
+          return { ...s, ...nextData, updatedAt: Date.now() };
+        }
+        return s;
+      })
     );
   };
 
@@ -592,10 +568,10 @@ export default function MainScreen() {
             isStudent: "",
             recentCourse: "",
             residence: "",
-            leisure: [],      // 여가 활동 (외출/활동)
-            hobby: [],        // 취미/관심사
-            exercise: [],     // 운동
-            travel: [],       // 여행
+            leisure: [],
+            hobby: [],
+            exercise: [],
+            travel: [],
           },
           speakingStyle: "natural",
         },
@@ -606,24 +582,31 @@ export default function MainScreen() {
     setActiveId(id);
   };
 
-  // ✅ appendTurn에 옵션을 추가해서 interviewer면 자동 TTS
   const appendTurn = (role, content, options = {}) => {
-    updateActiveSession((s) => ({
-      ...s,
-      updatedAt: Date.now(),
-      turns: [...(s.turns ?? []), { id: uid(), role, content, ts: Date.now() }],
-    }));
+    const newTurn = { id: uid(), role, content, ts: Date.now() };
+    
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === activeId
+          ? { ...s, updatedAt: Date.now(), turns: [...(s.turns || []), newTurn] }
+          : s
+      )
+    );
 
-    if (options.speak && role === "interviewer") {
+    if (options.speak && (role === "interviewer" || role === "assistant")) {
       speakText(content, { lang: "en-US", rate: 1.0, pitch: 1.0 });
     }
 
     setTimeout(() => {
-      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }, 0);
+      if (scrollRef.current) {
+        scrollRef.current.scrollTo({
+          top: scrollRef.current.scrollHeight,
+          behavior: "smooth",
+        });
+      }
+    }, 100);
   };
 
-  /** ✅ STT: 누적 버전 start/stop */
   const startSTT = () => {
     const SR = getSpeechRecognition();
     if (!SR) {
@@ -635,13 +618,12 @@ export default function MainScreen() {
     setErr("");
     stopSpeak();
 
-    // ✅ 시작 시 버퍼 초기화
     baseInputRef.current = input;
     finalBufferRef.current = "";
     interimRef.current = "";
 
     const rec = new SR();
-    rec.lang = "en-US";        // 필요하면 "ko-KR"
+    rec.lang = "en-US";
     rec.interimResults = true;
     rec.continuous = true;
     rec.maxAlternatives = 1;
@@ -656,11 +638,10 @@ export default function MainScreen() {
         else interimChunk += transcript;
       }
 
-      // ✅ final은 누적
       if (finalChunk.trim()) {
         const add = finalChunk.trim();
         finalBufferRef.current = (finalBufferRef.current + " " + add).trim();
-        interimRef.current = ""; // final 확정되면 interim은 비움
+        interimRef.current = "";
       } else {
         interimRef.current = interimChunk.trim();
       }
@@ -681,7 +662,6 @@ export default function MainScreen() {
 
     rec.onend = () => {
       setIsRecording(false);
-      // onend 되어도 finalBufferRef는 이미 input에 반영되어 있으니 그대로 남습니다.
     };
 
     sttRef.current = rec;
@@ -703,66 +683,65 @@ export default function MainScreen() {
   };
 
   const runTurn = async () => {
-  if (!active) return;
+    if (!active || loading) return;
+    const userText = input.trim();
+    
+    setErr("");
+    setLoading(true);
 
-  const userText = input.trim();
-  if (!userText) return;
+    try {
+      let currentSessionId = active.serverSessionId;
 
-  setErr("");
-  setLoading(true);
+      // [Case 1] 세션이 아직 없을 때 (연습 시작)
+      if (!currentSessionId) {
+        // 1. Eva의 첫 질문을 화면에 표시
+        const firstQuestion = "Could you tell me a little about yourself?";
+        appendTurn("interviewer", firstQuestion, { speak: true });
 
-  appendTurn("user", userText);
+        // 2. 서버 세션 생성
+        const started = await startSession({
+          goalGrade: active.targetGrade,
+          targetCount: 12,
+          profile: toApiProfile(active.profile),
+        });
 
-  if (isRecording) stopSTT();
+        // 3. 서버에서 받은 ID들을 세션 상태에 저장 (화면 갱신 발생)
+        updateActiveSession({
+          serverSessionId: started.sessionId,
+          serverProfileId: started.profileId,
+        });
 
-  try {
-    let serverSessionId = active.serverSessionId;
-
-    if (!serverSessionId) {
-      const started = await startSession({
-        goalGrade: active.targetGrade,
-        targetCount: 12,
-      });
-
-      serverSessionId = started.sessionId;
-
-      updateActiveSession((s) => ({
-        ...s,
-        serverSessionId: started.sessionId,
-        serverProfileId: started.profileId,
-        updatedAt: Date.now(),
-        profile: started.profile
-          ? {
-              ...s.profile,
-              name: started.profile.name ?? "",
-              job: started.profile.job ?? "",
-              city: started.profile.city ?? "",
-              survey: started.profile.hobbies ?? s.profile.survey,
-              speakingStyle: started.profile.speaking_style ?? "natural",
-            }
-          : s.profile,
-      }));
-
-      if (started.firstQuestion) {
-        appendTurn("interviewer", started.firstQuestion, { speak: true });
+        setLoading(false);
+        return; // 첫 질문 후 사용자 답변을 기다리기 위해 멈춤
       }
+
+      // [Case 2] 진행 중인데 입력값이 없을 때
+      if (!userText) {
+        setErr("답변을 입력해주세요.");
+        setLoading(false);
+        return;
+      }
+
+      // 4. 내 답변 전송 로직
+      appendTurn("user", userText);
+      setInput("");
+      if (isRecording) stopSTT();
+
+      // 5. 서버에 답변 보내고 다음 질문 받기
+      const data = await turnSession(currentSessionId, userText);
+      appendTurn("interviewer", data.questionText, { speak: true });
+
+    } catch (e) {
+      console.error("runTurn 에러:", e);
+      setErr(e?.message ?? "서버와 통신 중 오류가 발생했습니다.");
+    } finally {
+      setLoading(false);
     }
-
-    const data = await turnSession(serverSessionId, userText);
-    appendTurn("interviewer", data.questionText, { speak: true });
-
-    setInput("");
-  } catch (e) {
-    setErr(e?.message ?? "Unknown error");
-  } finally {
-    setLoading(false);
-  }
-};
+  };
 
   useEffect(() => {
     stopSpeak();
     stopSTT();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, activeTab]);
 
   useEffect(() => {
@@ -770,7 +749,6 @@ export default function MainScreen() {
       stopSTT();
       stopSpeak();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -828,19 +806,22 @@ export default function MainScreen() {
           <button className="icon-btn" onClick={() => setSidebarCollapsed((v) => !v)} title="toggle sidebar">
             ☰
           </button>
+
           <div className="topbar-title">{active?.title ?? "Session"}</div>
 
           <div className="topbar-tabs">
             <button className={`tab-btn ${activeTab === "chat" ? "active" : ""}`} onClick={() => setActiveTab("chat")}>
               채팅
             </button>
-            <button className={`tab-btn ${activeTab === "profile" ? "active" : ""}`} onClick={() => setActiveTab("profile")}>
+            <button
+              className={`tab-btn ${activeTab === "profile" ? "active" : ""}`}
+              onClick={() => setActiveTab("profile")}
+            >
               프로필 생성
             </button>
           </div>
 
           <div className="topbar-actions">
-
             <button
               type="button"
               className="btn"
